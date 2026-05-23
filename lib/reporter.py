@@ -18,7 +18,7 @@ class Reporter:
         self._thread = None
         self._stop_event = threading.Event()
 
-    def start(self, node_id: int, dashboard_url: str, interval: int = 15):
+    def start(self, node_id: int, dashboard_url: str, interval: int = 10):
         """Initializes settings and starts the periodic heartbeat thread"""
         self.node_id = node_id
         self.dashboard_url = dashboard_url
@@ -38,9 +38,12 @@ class Reporter:
     def _heartbeat_loop(self):
         """Periodic loop to report state."""
         while not self._stop_event.is_set():
-            state = get_state()
-            self.report_status(state["phase"], state["round"])
+            # Wait first, so we don't immediately report after start/transition
             self._stop_event.wait(self.interval)
+            
+            if not self._stop_event.is_set():
+                state = get_state()
+                self.report_status(state["phase"], state["round"])
 
     def report_status(self, phase: str, round_num: int):
         """Sends data immediately to the dashboard if configured."""

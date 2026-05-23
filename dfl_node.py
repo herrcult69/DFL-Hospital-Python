@@ -100,6 +100,8 @@ def _run_flask() -> None:
     _flask_ready.set()
     app.run(host="0.0.0.0", port=PORT, threaded=True, use_reloader=False)
 
+
+from lib.reporter import reporter
 if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs("output",   exist_ok=True)
@@ -119,6 +121,11 @@ if __name__ == "__main__":
         poll_interval  = args.poll_interval,
         poll_timeout   = args.poll_timeout,
     )
+    
+    # Start the reporter BEFORE running the training loops
+    dashboard_url = "http://127.0.0.1:3000/api/report"
+    reporter.start(node_id=NODE_ID, dashboard_url=dashboard_url, interval=5)  # Set to 5s for faster testing
+
     run_rounds(cfg)
 
     flask_thread.join()
