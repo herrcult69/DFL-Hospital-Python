@@ -84,6 +84,7 @@ def run(cfg: NodeConfig) -> None:
 
         # Polling barrier — also main thread
         log.info("Local training done. Polling peers...")
+        
         _wait_all_peers_done(cfg, round_num)
 
         # Aggregation — also main thread

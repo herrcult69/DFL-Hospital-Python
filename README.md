@@ -56,16 +56,13 @@ Each `partN.jsonl` has one JSON object per line:
 
 ```bash
 # Terminal 1 — Hospital A
-python fl_node.py --node-id 1 --port 5201 \
-  --peers 2:127.0.0.1:5202 3:127.0.0.1:5203
+python dfl_node.py --node-id 1 --port 5201 --peers 2:127.0.0.1:5202 3:127.0.0.1:5203
 
 # Terminal 2 — Hospital B
-python fl_node.py --node-id 2 --port 5202 \
-  --peers 1:127.0.0.1:5201 3:127.0.0.1:5203
+python dfl_node.py --node-id 2 --port 5202 --peers 1:127.0.0.1:5201 3:127.0.0.1:5203
 
 # Terminal 3 — Hospital C
-python fl_node.py --node-id 3 --port 5203 \
-  --peers 1:127.0.0.1:5201 2:127.0.0.1:5202
+python dfl_node.py --node-id 3 --port 5203 --peers 1:127.0.0.1:5201 2:127.0.0.1:5202
 ```
 
 Start all three within a few seconds of each other.

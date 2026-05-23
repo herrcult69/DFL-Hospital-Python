@@ -10,6 +10,10 @@ def set_state(phase: str, round_num: int) -> None:
     with _lock:
         _state["phase"] = phase
         _state["round"] = round_num
+    
+    # Broadcast to the central dashboard on every transition
+    from lib.reporter import reporter
+    reporter.report_status(phase, round_num)
 
 
 def get_state() -> dict:
