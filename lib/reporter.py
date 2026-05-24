@@ -38,7 +38,7 @@ class Reporter:
             self._thread.start()
             log.info(f"Reporter started, reporting to {dashboard_url} every {interval}s")
 
-    def get_current_ip(target_host, target_port):
+    def get_current_ip(self, target_host, target_port):
         # Create a fake UDP socket
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -72,14 +72,14 @@ class Reporter:
     def register_node(self):
         if not self.dashboard_url:
             return
-        
+        url = self.dashboard_url + "/register"
         payload = {
             "node_id": self.node_id,
             "ip_address" : self.ip_address,
             "port" : self.port
         }
         try:
-            requests.post(self.dashboard_url, json=payload, timeout = 5)
+            requests.post(url, json=payload, timeout = 5)
         except Exception as e:
             log.debug(f"Failed to register node to dashboard: {e}")
 
