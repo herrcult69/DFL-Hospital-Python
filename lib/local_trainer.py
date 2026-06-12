@@ -11,8 +11,8 @@ import os, shutil
 
 def main():
     # 1. Load Dataset
-    print("Loading dataset from local file node_3.json...")
-    dataset = load_dataset("json", data_files="node_3.json", split="train")
+    print("Loading dataset from local file ###.json...")
+    dataset = load_dataset("json", data_files="###.json", split="train")
 
     split_1 = dataset.train_test_split(test_size=0.2, seed=42)
     split_2 = split_1["test"].train_test_split(test_size=0.5, seed=42)
@@ -30,7 +30,7 @@ def main():
         # Reasoning style answer combining CoT and final response
         cot = item.get('Complex_CoT', '') or ""
         response = item.get('Response', '') or ""
-        answer = f"<think>\n{cot}\n</think>\n\n{response}"
+        answer = response
 
         messages = [
             {"role": "user", "content": prompt},
@@ -99,6 +99,19 @@ def main():
     # 4. Data Collator
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8)
 
+    EVAL_SAVE_EVERY_N_EPOCHS = 10
+
+    class EvalSaveEveryNEpochsCallback(TrainerCallback):
+        def __init__(self, interval_epochs: int):
+            self.interval_epochs = interval_epochs
+
+        def on_epoch_end(self, args, state, control, **kwargs):
+            epoch = int(round(state.epoch or 0))
+            should_run = epoch > 0 and epoch % self.interval_epochs == 0
+            control.should_evaluate = should_run
+            control.should_save = should_run
+            return control
+
     class KeepBestNCheckpointsCallback(TrainerCallback):
         def __init__(self, output_dir: str, n_best: int = 5):
             self.output_dir = output_dir
@@ -153,19 +166,19 @@ def main():
         gradient_accumulation_steps=4,
         learning_rate=1e-4,
         logging_steps=10,
-        num_train_epochs=100,
-        save_strategy="steps",
-        save_steps=100,
+        num_train_epochs=30,
+        save_strategy="epoch",
         save_total_limit=None,
-        eval_strategy="steps",
-        eval_steps=100,
+        eval_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         bf16=True,
         optim="adamw_torch",
         report_to="none",
-        gradient_checkpointing=True
+        gradient_checkpointing=False,
+        dataloader_num_workers=4,
+        dataloader_pin_memory=True
     )
 
     # 6. Initialize Trainer
@@ -176,6 +189,7 @@ def main():
         args=training_args,
         data_collator=data_collator,
         callbacks=[
+            EvalSaveEveryNEpochsCallback(EVAL_SAVE_EVERY_N_EPOCHS),
             KeepBestNCheckpointsCallback(output_dir=training_args.output_dir, n_best=5),
             EarlyStoppingCallback(early_stopping_patience=3, early_stopping_threshold=1e-5),
         ],
@@ -198,8 +212,8 @@ def main():
 
     # 8. Save final model
     print("Saving model...")
-    trainer.model.save_pretrained("./node3_gpt2_lora_final")
-    tokenizer.save_pretrained("./node3_gpt2_lora_final")
+    trainer.model.save_pretrained("./###_gpt2_lora_final")
+    tokenizer.save_pretrained("./###_gpt2_lora_final")
     print("Done!")
 
 if __name__ == "__main__":
