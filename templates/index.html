@@ -1,13 +1,139 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>DFL Clinic (Node {{ NODE_ID }})</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DFL Node Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #0f172a; color: #e2e8f0; padding: 20px; }
+  h1 { font-size: 1.3rem; margin-bottom: 16px; color: #38bdf8; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+  .card { background: #1e293b; border-radius: 10px; padding: 16px; border: 1px solid #334155; }
+  .card h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;
+             color: #94a3b8; margin-bottom: 10px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 4px 0;
+              border-bottom: 1px solid #334155; font-size: 0.9rem; }
+  .stat-row:last-child { border: none; }
+  .label { color: #94a3b8; }
+  .value { font-weight: 600; font-family: "SF Mono", "Fira Code", monospace; }
+  .phase-gossip  { color: #facc15; }
+  .phase-ring    { color: #38bdf8; }
+  .phase-agg     { color: #a78bfa; }
+  .phase-train   { color: #4ade80; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px;
+           font-size: 0.75rem; font-weight: 600; background: #334155; margin: 1px; }
+  .rumor-box { background: #0f172a; border-radius: 6px; padding: 8px;
+               font-family: "SF Mono", "Fira Code", monospace; font-size: 0.75rem;
+               max-height: 200px; overflow-y: auto; line-height: 1.5; }
+  .rumor-box div { padding: 1px 0; }
+  .table-box { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.78rem; line-height: 1.6; }
+  .highlight-self { color: #facc15; font-weight: 700; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 3px;
+         font-size: 0.65rem; background: #334155; margin-right: 4px; }
+</style>
 </head>
-<body style="font-family: sans-serif; max-width: 600px; margin: 40px auto;">
-    <h2>Symptoms Analysis (Node {{ NODE_ID }})</h2>
-    <textarea id="symptoms" rows="4" style="width: 100%;" placeholder="Enter patient symptoms..."></textarea><br><br>
-    <button onclick="predict()">Get Diagnosis</button>
-    <div id="result" style="margin-top: 20px; white-space: pre-wrap; background: #f4f4f4; padding: 10px; border-radius: 5px; display: none;"></div>
+<body>
+<h1>🔍 DFL Node Dashboard — <span id="node-id">—</span></h1>
+<div class="grid">
+
+  <!-- Card: Identity & State Machine -->
+  <div class="card">
+    <h2>⚙️ State Machine</h2>
+    <div class="stat-row"><span class="label">Phase</span><span class="value" id="phase">—</span></div>
+    <div class="stat-row"><span class="label">Round</span><span class="value" id="round">—</span></div>
+    <div class="stat-row"><span class="label">Table Hash</span><span class="value" id="table-hash" style="font-size:0.75rem">—</span></div>
+    <div class="stat-row"><span class="label">Total Nodes</span><span class="value" id="n-nodes">—</span></div>
+  </div>
+
+  <!-- Card: Network Topology -->
+  <div class="card">
+    <h2>🌐 Network Topology</h2>
+    <div class="stat-row"><span class="label">Left Ring</span><span class="value" id="left-ring">—</span></div>
+    <div class="stat-row"><span class="label">Right Ring</span><span class="value" id="right-ring">—</span></div>
+    <div class="stat-row" style="flex-direction:column; gap:4px; padding-top:6px">
+      <span class="label">Gossip Neighbors (K-graph)</span>
+      <span id="gossip-nbrs" style="font-size:0.82rem">—</span>
+    </div>
+    <div class="stat-row" style="flex-direction:column; gap:4px; padding-top:6px">
+      <span class="label">Global Table</span>
+      <div class="table-box" id="global-table">—</div>
+    </div>
+  </div>
+
+  <!-- Card: SIR Rumor Cache -->
+  <div class="card" style="grid-column: 1 / -1;">
+    <h2>📢 Known Rumors (SIR Cache) — <span id="rumor-count">0</span></h2>
+    <div class="rumor-box" id="rumor-list"><em>No rumors yet.</em></div>
+  </div>
+
+</div>
+
+<script>
+const PHASE_COLORS = {
+  "PHASE_1_GOSSIP": "phase-gossip",
+  "PHASE_2_RING": "phase-ring",
+  "PHASE_3_AGG": "phase-agg",
+  "PHASE_4_TRAIN": "phase-train",
+};
+const PHASE_LABELS = {
+  "PHASE_1_GOSSIP": "Phase 1 · Gossip",
+  "PHASE_2_RING": "Phase 2 · Ring",
+  "PHASE_3_AGG": "Phase 3 · Aggregation",
+  "PHASE_4_TRAIN": "Phase 4 · Training",
+};
+
+async function poll() {
+  try {
+    const r = await fetch("/status");
+    const d = await r.json();
+
+    document.getElementById("node-id").textContent = d.node_id || "—";
+    document.getElementById("phase").textContent = PHASE_LABELS[d.phase] || d.phase;
+    document.getElementById("phase").className = "value " + (PHASE_COLORS[d.phase] || "");
+    document.getElementById("round").textContent = d.round ?? "—";
+    document.getElementById("table-hash").textContent = d.table_hash?.slice(0,12) || "—";
+    document.getElementById("n-nodes").textContent = d.n_nodes ?? "—";
+
+    // Ring neighbors
+    document.getElementById("left-ring").textContent = d.left_neighbor || "—";
+    document.getElementById("right-ring").textContent = d.right_neighbor || "—";
+
+    // Gossip neighbors
+    const gnbrs = d.gossip_neighbors || [];
+    document.getElementById("gossip-nbrs").innerHTML =
+      gnbrs.length ? gnbrs.map(n => `<span class="badge">${n}</span>`).join(" ") : "<em>none</em>";
+
+    // Global table
+    const tbl = d.global_table || [];
+    const myId = d.node_id;
+    document.getElementById("global-table").innerHTML =
+      tbl.length
+        ? tbl.map(n => `<div>${n === myId
+            ? '<span class="tag">self</span><span class="highlight-self">'+n+'</span>'
+            : n}</div>`).join("")
+        : "<em>empty</em>";
+
+    // Known rumors
+    const rumors = d.known_rumors || [];
+    document.getElementById("rumor-count").textContent = rumors.length;
+    document.getElementById("rumor-list").innerHTML =
+      rumors.length
+        ? rumors.map(r => `<div>${r}</div>`).join("")
+        : "<em>No rumors yet.</em>";
+
+  } catch(e) {
+    document.getElementById("phase").textContent = "⚠️ Offline";
+    document.getElementById("phase").className = "value";
+  }
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
     
     <script>
         async function predict() {

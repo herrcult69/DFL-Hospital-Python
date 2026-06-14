@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package ring_transfer;
+
+// Bidirectional streaming for the Ring All-Gather data plane.
+// Each node opens a single gRPC bidirectional stream to its right neighbor
+// and accepts one from its left neighbor. Chunks flow in one direction
+// around the logical ring for exactly N-1 hops.
+service RingTransfer {
+  // StreamChunks is a bidirectional streaming RPC.
+  // The sender pushes Chunk messages; the receiver may send Ack messages
+  // for flow control.
+  rpc StreamChunks(stream Chunk) returns (stream Ack);
+}
+
+message Chunk {
+  // The raw safetensors bytes for one chunk of the model.
+  bytes chunk_bytes = 1;
+
+  // The IP:Port of the node that originally produced this chunk.
+  string originator_ip = 2;
+
+  // The index of this chunk within the originator's split (0..N-1).
+  int32 chunk_id = 3;
+
+  // Number of hops this chunk has taken so far.
+  int32 hops_taken = 4;
+
+  // Total number of chunks expected in this round (= N, the number
+  // of active nodes in the ring consensus table).
+  int32 total_chunks = 5;
+
+  // IP:Port addresses of dead nodes detected along the ring path.
+  // Used for dynamic ring patching and later converted to Phase 1
+  // gossip rumors.
+  repeated string dead_nodes_detected = 6;
+}
+
+message Ack {
+  // The chunk_id being acknowledged.
+  int32 chunk_id = 1;
+
+  // Status: "ok" or "error".
+  string status = 2;
+
+  // Optional error detail.
+  string error_message = 3;
+}
