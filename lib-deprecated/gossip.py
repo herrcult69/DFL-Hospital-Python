@@ -11,7 +11,13 @@ Background gossip client:
   - After 3 seconds of silence: sorts the global table, computes ring
     neighbors, and triggers the Phase 1 → Phase 2 transition.
 """
+"""
+Node configuration — parsed from CLI args or environment.
 
+⚠️  **LEGACY CODE** — This file is part of the legacy DFL-Hospital-Python implementation.
+    A complete rewrite is in progress. Do not modify this file.
+    See LEGACY_REFERENCE.md for the authoritative design documentation.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -26,8 +32,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from src.config import NodeConfig
-from src.state import NodeState, Phase, gossip_addr_from_node_id
+from lib.config import NodeConfig
+from lib.state import NodeState, Phase, gossip_addr_from_node_id
 
 log = logging.getLogger(__name__)
 

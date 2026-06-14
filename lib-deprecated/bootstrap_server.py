@@ -13,7 +13,13 @@ master K-regular graph adjacency list. Responsibilities:
 The Bootstrap runs on its own gossip_port and can be started as:
   python src/bootstrap_server.py --gossip-port 5400
 """
+"""
+Node configuration — parsed from CLI args or environment.
 
+⚠️  **LEGACY CODE** — This file is part of the legacy DFL-Hospital-Python implementation.
+    A complete rewrite is in progress. Do not modify this file.
+    See LEGACY_REFERENCE.md for the authoritative design documentation.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -26,9 +32,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from src.gossip import GossipBody
-from src.graph import GraphManager
-from src.state import NodeState, Phase, split_node_id
+from lib.gossip import GossipBody
+from lib.graph import GraphManager
+from lib.state import NodeState, Phase, split_node_id
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +97,7 @@ class BootstrapServer:
 
     def _get_node_addr(self, node_id: str) -> str:
         """The gossip address is just 'host:gossip_port' from the node_id."""
-        from src.state import gossip_addr_from_node_id
+        from lib.state import gossip_addr_from_node_id
         return gossip_addr_from_node_id(node_id)
 
     # ── Routes (called from FastAPI) ──────────────────────────────────────
@@ -307,7 +313,7 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    from src.config import NodeConfig
+    from lib.config import NodeConfig
     cfg = NodeConfig(
         node_id=args.node_id,
         gossip_port=args.gossip_port,

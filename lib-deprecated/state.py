@@ -13,7 +13,13 @@ Transitions:
   PHASE_3_AGG    → (barrier) → PHASE_4_TRAIN
   PHASE_4_TRAIN  → (barrier) → PHASE_1_GOSSIP
 """
+"""
+Node configuration — parsed from CLI args or environment.
 
+⚠️  **LEGACY CODE** — This file is part of the legacy DFL-Hospital-Python implementation.
+    A complete rewrite is in progress. Do not modify this file.
+    See LEGACY_REFERENCE.md for the authoritative design documentation.
+"""
 from __future__ import annotations
 
 from enum import Enum

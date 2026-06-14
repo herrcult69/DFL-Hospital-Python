@@ -14,6 +14,13 @@ Usage:
   python src/worker_node.py --node-id "192.168.1.2:5401" --gossip-port 5401 --grpc-port 5501 \
     --bootstrap "http://192.168.1.1:5400"
 """
+"""
+Node configuration — parsed from CLI args or environment.
+
+⚠️  **LEGACY CODE** — This file is part of the legacy DFL-Hospital-Python implementation.
+    A complete rewrite is in progress. Do not modify this file.
+    See LEGACY_REFERENCE.md for the authoritative design documentation.
+"""
 
 from __future__ import annotations
 
@@ -27,16 +34,16 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 
-from src.bootstrap_server import (
+from lib.bootstrap_server import (
     BootstrapServer,
     GossipBody,
     RegisterRequest,
     create_app as create_bootstrap_app,
 )
-from src.config import NodeConfig, parse_cli_args
-from src.gossip import GossipEngine, create_gossip_router
-from src.ring_transfer import RingTransferClient, RingTransferServicer
-from src.state import NodeState, Phase, gossip_addr_from_node_id
+from lib.config import NodeConfig, parse_cli_args
+from lib.gossip import GossipEngine, create_gossip_router
+from lib.ring_transfer import RingTransferClient, RingTransferServicer
+from lib.state import NodeState, Phase, gossip_addr_from_node_id
 
 import protos.ring_transfer_pb2_grpc as pb2_grpc
 
