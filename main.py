@@ -1,0 +1,61 @@
+"""
+DFL Node entry point.
+
+Bootstrap:
+    python main.py --host 127.0.0.1 --port 8000 --grpc-port 9000 --bootstrap
+
+Worker:
+    python main.py --host 127.0.0.1 --port 8001 --grpc-port 9001 --bootstrap-url http://127.0.0.1:8000
+"""
+import argparse
+import logging
+import uvicorn
+
+from src.state import NodeState
+from src.bootstrap import create_bootstrap_app
+from src.worker import create_worker_app
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="DFL Node")
+    p.add_argument("--host",          default="127.0.0.1")
+    p.add_argument("--port",          type=int, default=8000)
+    p.add_argument("--grpc-port",     type=int, default=9000)
+    p.add_argument("--bootstrap",     action="store_true", help="Run as Bootstrap node")
+    p.add_argument("--bootstrap-url", default="http://127.0.0.1:8000", help="Bootstrap URL (worker only)")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    node_id = f"{args.host}:{args.port}:{args.grpc_port}"
+
+    if args.bootstrap:
+        # ── Bootstrap mode ───────────────────────────────────────────────────
+        state = NodeState(node_id=node_id, is_bootstrap=True)
+        state.add_node(node_id)   # Bootstrap registers itself first
+        app = create_bootstrap_app(state=state)
+
+        print(f"\n[BOOTSTRAP] Node ID : {node_id}")
+        print(f"[BOOTSTRAP] Status  : http://{args.host}:{args.port}/status")
+        print(f"[BOOTSTRAP] Table   : http://{args.host}:{args.port}/table\n")
+
+    else:
+        # ── Worker mode ──────────────────────────────────────────────────────
+        state = NodeState(node_id=node_id, is_bootstrap=False)
+        app = create_worker_app(state=state, bootstrap_url=args.bootstrap_url)
+
+        print(f"\n[NODE] Node ID   : {node_id}")
+        print(f"[NODE] Bootstrap : {args.bootstrap_url}")
+        print(f"[NODE] Status    : http://{args.host}:{args.port}/status\n")
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
