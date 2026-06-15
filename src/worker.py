@@ -7,12 +7,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse
 
 from .config import NetworkConfig
 from .models import JoinRequest, RewireRequest, RewireResponse, StatusResponse
 from .state import NodeState
+
+from .gossip import GossipEngine
+from .models import Rumor, RumorType
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -42,7 +45,14 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
         yield
 
     app = FastAPI(title="DFL Worker Node", lifespan=lifespan)
+    gossip = GossipEngine(state=state, config=config)
 
+    @app.post("/gossip")
+    async def gossip_receive(rumor: Rumor, request: Request):
+        sender_id = request.headers.get("X-Sender-Id", "")
+        await gossip.receive(rumor, sender_id=sender_id)
+        return {"status": "ok"}
+    
     @app.post("/rewire", response_model=RewireResponse)
     async def rewire(req: RewireRequest):
         state.neighbor_map = set(req.new_neighbors)

@@ -107,11 +107,15 @@
     </div>
     
     <div class="card">
-      <h2>Node Type</h2>
+      <h2>Node Info</h2>
       <div class="stat-grid">
         <div class="stat-item">
           <div class="stat-label">Role</div>
           <div class="stat-value" id="role">Loading...</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Round</div>
+          <div class="stat-value" id="round">—</div>
         </div>
         <div class="stat-item">
           <div class="stat-label">Total Nodes</div>
@@ -150,20 +154,19 @@
           roleEl.className = 'stat-value worker';
         }
         
+        document.getElementById('round').textContent = data.current_round ?? 0;
         document.getElementById('n-nodes').textContent = data.global_table.length;
         
-        // Display neighbors
+        // Display neighbors (full node ID)
         const neighborHtml = data.neighbor_map.map(node => {
-          const shortId = node.split(':')[0];
-          return `<span class="node-tag">${shortId}</span>`;
+          return `<span class="node-tag">${node}</span>`;
         }).join('') || 'No neighbors yet';
         document.getElementById('neighbors').innerHTML = neighborHtml;
         
-        const selfNode = data.node_id.split(':')[0];
+        const selfNode = data.node_id;
         const tableHtml = data.global_table.map(node => {
-          const shortId = node.split(':')[0];
           const isSelf = node === data.node_id;
-          return `<span class="node-tag${isSelf ? ' self' : ''}">${shortId}</span>`;
+          return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
         }).join('');
         document.getElementById('global-table').innerHTML = tableHtml || 'Empty';
       } catch (err) {

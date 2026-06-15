@@ -6,9 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse
 
 from .config import NetworkConfig
-from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse
+from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse, Rumor, RumorType
 from .state import NodeState
 from .graph import GraphManager
+from .gossip import GossipEngine
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -26,6 +27,7 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
         await http_client.aclose() # Fast API Close code
 
     app = FastAPI(title="DFL Bootstrap Node", lifespan=lifespan)
+    gossip = GossipEngine(state=state, config=config)
 
     def _gossip_addr(node_id: str) -> str:
         host, gossip_port, _ = node_id.split(":")
@@ -47,7 +49,7 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
     async def join(req: JoinRequest):
         rewire_map = graph.register(req.node_id)
         state.add_node(req.node_id)
-
+        
         for affected_node, new_neighbors in rewire_map.items():
             if affected_node == state.node_id:
                 # Bootstrap updates its own neighbor map directly — no HTTP call
@@ -55,7 +57,14 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                 log.info(f"Bootstrap self-rewired → {new_neighbors}")
             else:
                 await _send_rewire(affected_node, new_neighbors)
-
+        join_rumor = Rumor.build(
+            type=RumorType.JOIN,
+            originator_id=state.node_id,
+            round=state.round,
+            ttl=config.gossip_ttl,
+            payload={"node_id": req.node_id},
+        )
+        await gossip.spread(join_rumor)
         neighbors = graph.get_neighbors(req.node_id)
         log.info(f"Node joined: {req.node_id} | neighbors: {neighbors} | total: {len(state.global_table)}")
 
@@ -64,6 +73,11 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
             global_table=list(state.global_table),
             message=f"Welcome! Network has {len(state.global_table)} node(s).",
         )
+    @app.post("/gossip")
+    async def gossip_receive(rumor: Rumor, request: Request):
+        sender_id = request.headers.get("X-Sender-Id", "")
+        await gossip.receive(rumor, sender_id=sender_id)
+        return {"status": "ok"}
 
     @app.get("/status", response_model=StatusResponse)
     async def status():

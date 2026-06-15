@@ -9,6 +9,7 @@ class NetworkConfig: # Default settings
     port:          int   = 8000
     grpc_port:     int   = 9000
     bootstrap_url: str   = "127.0.0.1:8000"
+    gossip_ttl: int = 10  # safe default; tune to ceil(log2(N)) + 2 later
 
     @property
     def node_id(self) -> str:

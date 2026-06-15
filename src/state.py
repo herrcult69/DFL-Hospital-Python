@@ -1,12 +1,16 @@
 from dataclasses import dataclass, field
 
 
+
 @dataclass
 class NodeState:
     node_id:      str
     is_bootstrap: bool = False
     global_table: list[str] = field(default_factory=list)
     neighbor_map: set[str]  = field(default_factory=set)
+    round:        int      = 0
+    seen_rumors:  set[str] = field(default_factory=set)
+    heartbeat_seen: set[str] = field(default_factory=set)
 
     def add_node(self, node_id: str) -> bool:
         """Add a node to the global table. Returns True if it was new."""
@@ -22,4 +26,11 @@ class NodeState:
             "is_bootstrap": self.is_bootstrap,
             "global_table": list(self.global_table),
             "neighbor_map": list(self.neighbor_map),
+            "current_round": self.round
         }
+        
+    def is_seen(self, rumor_id: str) -> bool:
+        return rumor_id in self.seen_rumors
+
+    def mark_seen(self, rumor_id: str) -> None:
+        self.seen_rumors.add(rumor_id)
