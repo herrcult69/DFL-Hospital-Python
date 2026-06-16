@@ -125,7 +125,30 @@
           <div class="stat-label">Total Nodes</div>
           <div class="stat-value" id="n-nodes">—</div>
         </div>
+        <div class="stat-item">
+          <div class="stat-label">Table Locked</div>
+          <div class="stat-value" id="table-locked">—</div>
+        </div>
       </div>
+    </div>
+    
+    <div class="card">
+      <h2>Ring Neighbors</h2>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <div class="stat-label">Left</div>
+          <div class="stat-value" id="ring-left">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Right</div>
+          <div class="stat-value" id="ring-right">—</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>Ready Set</h2>
+      <div class="global-table" id="ready-set">Loading...</div>
     </div>
     
     <div class="card">
@@ -171,6 +194,16 @@
         document.getElementById('round').textContent = data.current_round ?? 0;
         document.getElementById('phase').textContent = data.phase ?? 'PHASE_1';
         document.getElementById('n-nodes').textContent = data.global_table.length;
+        document.getElementById('table-locked').textContent = data.table_locked ? 'Yes' : 'No';
+        document.getElementById('ring-left').textContent = data.ring_left || '—';
+        document.getElementById('ring-right').textContent = data.ring_right || '—';
+        
+        // Display ready set
+        const readyHtml = data.ready_set.map(node => {
+          const isSelf = node === data.node_id;
+          return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
+        }).join('') || 'None ready yet';
+        document.getElementById('ready-set').innerHTML = readyHtml;
         
         // Display neighbors (full node ID)
         const neighborHtml = data.neighbor_map.map(node => {

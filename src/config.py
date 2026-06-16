@@ -13,7 +13,8 @@ class NetworkConfig: # Default settings
     heartbeat_interval: float = 2.0
     phase1_floor: float = 5.0 # minimal second that the phase one gonna be
     stability_window: float = 10.0 # stability timer -> global table not gonna for current round 
-
+    ready_timeout: float = 10.0  # seconds to wait for all READY signals
+    
     @property
     def node_id(self) -> str:
         return f"{self.host}:{self.port}:{self.grpc_port}"

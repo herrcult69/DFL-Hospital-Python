@@ -16,6 +16,10 @@ class StatusResponse(BaseModel):
     node_id:       str
     global_table:  list[str]
     neighbor_map:  list[str]
+    ring_left:     str | None
+    ring_right:    str | None
+    table_locked:  bool
+    ready_set:     list[str]
     is_bootstrap:  bool
     current_round: int
     phase:         str
@@ -45,7 +49,11 @@ class Rumor(BaseModel):
 
     @staticmethod
     def build(type: RumorType, originator_id: str, round: int, ttl: int, payload: dict = {}) -> "Rumor":
-        rumor_id = f"{type}:{originator_id}:{round}"
+        if type == RumorType.JOIN:
+            joining_node = payload.get("node_id", originator_id)
+            rumor_id = f"{type}:{joining_node}:{round}"
+        else:
+            rumor_id = f"{type}:{originator_id}:{round}"
         return Rumor(
             type=type,
             originator_id=originator_id,

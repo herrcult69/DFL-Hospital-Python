@@ -95,10 +95,53 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
             state.ring_right = ring[(idx + 1) % n]
             log.info(f"Ring formed — left: {state.ring_left} | right: {state.ring_right}")
 
-            # Step 4 onward: READY barrier — next feature
-            state.phase = Phase.PHASE_2   # ← PREMATURELY CHANGE PHASE PLACE HOLDER, stops heartbeat loop
-            log.info("Phase flipped to PHASE_2 (READY barrier not yet implemented)")
-            
+            # Step 4: originate READY
+            state.ready_set.add(state.node_id)   # count self
+            state.ready_timeout = time.time()
+            ts = time.time()
+            ready_rumor = Rumor(
+                type=RumorType.READY,
+                originator_id=state.node_id,
+                round=state.round,
+                rumor_id=f"READY:{state.node_id}:{state.round}:{ts}",
+                ttl=config.gossip_ttl,
+                payload={"target_phase": "PHASE_2"},
+            )
+            state.mark_seen(ready_rumor.rumor_id)
+            await gossip.spread(ready_rumor)
+
+            # Step 5: wait for barrier
+            advanced = await _wait_ready_barrier()
+            if not advanced:
+                return   # hold, stability timer will retry
+
+            # Step 6: flip phase only if barrier passed
+            state.phase = Phase.PHASE_2
+            log.info(f"Phase flipped to PHASE_2 | participants: {state.global_table}")
+
+        async def _wait_ready_barrier() -> bool:   # ← return bool
+            while True:
+                await asyncio.sleep(0.5)
+
+                if state.ready_set >= set(state.global_table):
+                    log.info("READY barrier cleared — all nodes ready")
+                    return True                    # ← success
+
+                if time.time() - state.ready_timeout >= config.ready_timeout:
+                    missing = set(state.global_table) - state.ready_set
+                    log.warning(f"READY barrier timeout — dropping: {missing}")
+                    for node in missing:
+                        state.global_table.remove(node)
+                    if len(state.global_table) < 2:
+                        log.warning("Not enough nodes after timeout — holding")
+                        state.table_locked           = False
+                        state.ready_set              = set()
+                        state.last_table_change_time = time.time()
+                        return False               # ← failed, don't flip
+                    return True                    # ← reduced set, still proceed
+
+    
+                
         timer_task    = asyncio.create_task(_stability_timer())
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
         yield
@@ -117,6 +160,9 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
     async def rewire(req: RewireRequest):
         state.neighbor_map = set(req.new_neighbors)
         log.info(f"Rewired. New neighbors: {req.new_neighbors}")
+        for node_id in req.new_neighbors:
+            if node_id not in state.global_table:
+                state.add_node(node_id)
         return RewireResponse(status="ok")
 
     @app.get("/status", response_model=StatusResponse)
