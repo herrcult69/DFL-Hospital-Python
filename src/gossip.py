@@ -6,7 +6,7 @@ import logging
 import httpx, time
 
 from .models import Rumor, RumorType
-from .state import NodeState
+from .state import NodeState, Phase
 from .config import NetworkConfig
 
 log = logging.getLogger(__name__)
@@ -78,6 +78,15 @@ class GossipEngine:
         elif rumor.type == RumorType.HEARTBEAT:
             self.state.heartbeat_seen.add(rumor.originator_id)
             log.debug(f"Heartbeat received from: {rumor.originator_id}")
+            
+        elif rumor.type == RumorType.READY:
+            target = rumor.payload.get("target_phase")
+            if (
+                target == Phase.PHASE_2.value                
+                and rumor.originator_id in self.state.global_table #  sanity check
+            ):
+                self.state.ready_set.add(rumor.originator_id)
+                log.debug(f"READY received from {rumor.originator_id} | ready_set: {len(self.state.ready_set)}")
     
     async def originate_heartbeat(self) -> None:
         """Build and spread a fresh heartbeat. beat is a monotonic counter."""
