@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node Status - DFL Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0;
+    padding: 30px;
+    min-height: 100vh;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 { 
+    font-size: 1.8rem; 
+    margin-bottom: 25px; 
+    color: #38bdf8;
+    text-align: center;
+    text-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
+  }
+  .card {
+    background: rgba(30, 41, 59, 0.8);
+    border-radius: 16px;
+    padding: 25px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  }
+  .card h2 {
+    font-size: 1.1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #94a3b8;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #334155;
+    padding-bottom: 10px;
+  }
+  .node-id {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 1.2rem;
+    background: linear-gradient(45deg, #38bdf8, #0ea5e9);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    word-break: break-all;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+  }
+  .stat-item {
+    background: rgba(15, 23, 42, 0.5);
+    padding: 15px;
+    border-radius: 10px;
+    border: 1px solid rgba(51, 65, 85, 0.3);
+  }
+  .stat-label { color: #94a3b8; font-size: 0.85rem; margin-bottom: 5px; }
+  .stat-value { font-size: 1.3rem; font-weight: 700; color: #38bdf8; }
+  .stat-value.bootstrap { color: #a78bfa; }
+  .stat-value.worker { color: #4ade80; }
+  .global-table {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.9rem;
+    max-height: 300px;
+    overflow-y: auto;
+    background: rgba(15, 23, 42, 0.5);
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid rgba(51, 65, 85, 0.3);
+  }
+  .node-tag {
+    display: inline-block;
+    background: linear-gradient(45deg, #334155, #475569);
+    padding: 4px 10px;
+    border-radius: 6px;
+    margin: 4px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  .node-tag.self {
+    background: linear-gradient(45deg, #facc15, #eab308);
+    color: #0f172a;
+    font-weight: 600;
+  }
+  .back-link {
+    display: block;
+    text-align: center;
+    margin-top: 25px;
+    color: #38bdf8;
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  .back-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1>🖥️ Node Status</h1>
+    
+    <div class="card">
+      <h2>Node Identity</h2>
+      <div class="node-id" id="node-id">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Node Info</h2>
+      <div class="stat-grid">
+        <div class="stat-item">
+          <div class="stat-label">Role</div>
+          <div class="stat-value" id="role">Loading...</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Round</div>
+          <div class="stat-value" id="round">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Phase</div>
+          <div class="stat-value" id="phase">—</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Total Nodes</div>
+          <div class="stat-value" id="n-nodes">—</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <h2>Seen Rumors (newest 10)</h2>
+      <div class="global-table" id="seen-rumors">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Heartbeat Seen</h2>
+      <div class="global-table" id="heartbeat-seen">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Neighbors</h2>
+      <div class="global-table" id="neighbors">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Global Table</h2>
+      <div class="global-table" id="global-table">Loading...</div>
+    </div>
+    
+    <a href="/" class="back-link">← Back to Dashboard</a>
+  </div>
+
+  <script>
+    async function loadStatus() {
+      try {
+        const response = await fetch('/status');
+        const data = await response.json();
+        
+        document.getElementById('node-id').textContent = data.node_id;
+        
+        const roleEl = document.getElementById('role');
+        if (data.is_bootstrap) {
+          roleEl.textContent = 'Bootstrap';
+          roleEl.className = 'stat-value bootstrap';
+        } else {
+          roleEl.textContent = 'Worker';
+          roleEl.className = 'stat-value worker';
+        }
+        
+        document.getElementById('round').textContent = data.current_round ?? 0;
+        document.getElementById('phase').textContent = data.phase ?? 'PHASE_1';
+        document.getElementById('n-nodes').textContent = data.global_table.length;
+        
+        // Display neighbors (full node ID)
+        const neighborHtml = data.neighbor_map.map(node => {
+          return `<span class="node-tag">${node}</span>`;
+        }).join('') || 'No neighbors yet';
+        document.getElementById('neighbors').innerHTML = neighborHtml;
+        
+        const selfNode = data.node_id;
+        const tableHtml = data.global_table.map(node => {
+          const isSelf = node === data.node_id;
+          return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
+        }).join('');
+        document.getElementById('global-table').innerHTML = tableHtml || 'Empty';
+        
+        // Display newest 10 seen rumors (already limited in Python, reverse for newest first)
+        const newestRumors = data.seen_rumors.slice().reverse();
+        const rumorsHtml = newestRumors.map(rumor => {
+          return `<span class="node-tag">${rumor}</span>`;
+        }).join('') || 'No rumors seen yet';
+        document.getElementById('seen-rumors').innerHTML = rumorsHtml;
+        
+        // Display all heartbeat seen
+        const heartbeatHtml = data.heartbeat_seen.map(node => {
+          const isSelf = node === data.node_id;
+          return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
+        }).join('') || 'No heartbeats seen yet';
+        document.getElementById('heartbeat-seen').innerHTML = heartbeatHtml;
+      } catch (err) {
+        console.error('Failed to load status:', err);
+      }
+    }
+    
+    loadStatus();
+    setInterval(loadStatus, 5000);
+  </script>
+</body>
+</html>
