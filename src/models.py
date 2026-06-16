@@ -8,14 +8,19 @@ class JoinRequest(BaseModel):
 class JoinResponse(BaseModel):
     neighbors:    list[str]
     global_table: list[str]
+    round:        int
     message: str
 
 
 class StatusResponse(BaseModel):
-    node_id:      str
-    global_table: list[str]
-    neighbor_map: list[str]
-    is_bootstrap: bool
+    node_id:       str
+    global_table:  list[str]
+    neighbor_map:  list[str]
+    is_bootstrap:  bool
+    current_round: int
+    phase:         str
+    seen_rumors:   list[str]
+    heartbeat_seen: list[str]
 
 class RewireRequest(BaseModel):
     new_neighbors: list[str]

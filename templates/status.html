@@ -118,10 +118,24 @@
           <div class="stat-value" id="round">—</div>
         </div>
         <div class="stat-item">
+          <div class="stat-label">Phase</div>
+          <div class="stat-value" id="phase">—</div>
+        </div>
+        <div class="stat-item">
           <div class="stat-label">Total Nodes</div>
           <div class="stat-value" id="n-nodes">—</div>
         </div>
       </div>
+    </div>
+    
+    <div class="card">
+      <h2>Seen Rumors (newest 10)</h2>
+      <div class="global-table" id="seen-rumors">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Heartbeat Seen</h2>
+      <div class="global-table" id="heartbeat-seen">Loading...</div>
     </div>
     
     <div class="card">
@@ -155,6 +169,7 @@
         }
         
         document.getElementById('round').textContent = data.current_round ?? 0;
+        document.getElementById('phase').textContent = data.phase ?? 'PHASE_1';
         document.getElementById('n-nodes').textContent = data.global_table.length;
         
         // Display neighbors (full node ID)
@@ -169,6 +184,20 @@
           return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
         }).join('');
         document.getElementById('global-table').innerHTML = tableHtml || 'Empty';
+        
+        // Display newest 10 seen rumors (already limited in Python, reverse for newest first)
+        const newestRumors = data.seen_rumors.slice().reverse();
+        const rumorsHtml = newestRumors.map(rumor => {
+          return `<span class="node-tag">${rumor}</span>`;
+        }).join('') || 'No rumors seen yet';
+        document.getElementById('seen-rumors').innerHTML = rumorsHtml;
+        
+        // Display all heartbeat seen
+        const heartbeatHtml = data.heartbeat_seen.map(node => {
+          const isSelf = node === data.node_id;
+          return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
+        }).join('') || 'No heartbeats seen yet';
+        document.getElementById('heartbeat-seen').innerHTML = heartbeatHtml;
       } catch (err) {
         console.error('Failed to load status:', err);
       }

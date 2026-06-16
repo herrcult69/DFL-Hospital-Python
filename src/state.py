@@ -1,5 +1,13 @@
 from dataclasses import dataclass, field
+from enum import Enum
+import time, logging
+log = logging.getLogger(__name__)
 
+class Phase(Enum):
+    PHASE_1 = "PHASE_1"
+    PHASE_2 = "PHASE_2"
+    PHASE_3 = "PHASE_3"
+    PHASE_4 = "PHASE_4"
 
 
 @dataclass
@@ -9,28 +17,61 @@ class NodeState:
     global_table: list[str] = field(default_factory=list)
     neighbor_map: set[str]  = field(default_factory=set)
     round:        int      = 0
+    phase:       Phase     = Phase.PHASE_1 
+    ring_left:  str | None = None   # ← NEW
+    ring_right: str | None = None   # ← NEW
     seen_rumors:  set[str] = field(default_factory=set)
     heartbeat_seen: set[str] = field(default_factory=set)
+    table_locked:           bool = False
+    last_table_change_time: float = field(default_factory=time.time)  # last time global table changed
+    ready_set:       set[str] = field(default_factory=set) # nodes that are ready
+    ready_timeout:   float    = 0.0   # timestamp when barrier started
 
     def add_node(self, node_id: str) -> bool:
         """Add a node to the global table. Returns True if it was new."""
+        if self.table_locked:   # reject if locked
+            log.debug(f"Table locked, ignoring add_node({node_id})")
+            return False
         if node_id not in self.global_table:
             self.global_table.append(node_id)
             self.global_table.sort()
+            self.last_table_change_time = time.time()
             return True
         return False
 
-    def snapshot(self) -> dict:
-        return {
-            "node_id":      self.node_id,
-            "is_bootstrap": self.is_bootstrap,
-            "global_table": list(self.global_table),
-            "neighbor_map": list(self.neighbor_map),
-            "current_round": self.round
-        }
-        
     def is_seen(self, rumor_id: str) -> bool:
         return rumor_id in self.seen_rumors
 
     def mark_seen(self, rumor_id: str) -> None:
         self.seen_rumors.add(rumor_id)
+        
+    def reset_phase1(self) -> None:
+        """Called when a new round starts — clear per-round tracking."""
+        self.heartbeat_seen = set()
+        self.seen_rumors    = set()   # stale rumor_ids from old round are useless
+        self.phase          = Phase.PHASE_1
+        self.table_locked           = False
+        self.last_table_change_time = time.time()   # ← reset the window clock
+        
+        
+    def snapshot(self) -> dict:
+        def get_timestamp(rumor_id: str) -> float:
+            parts = rumor_id.split(":")
+            if len(parts) >= 2:
+                try:
+                    return float(parts[-1])
+                except ValueError:
+                    return 0.0
+            return 0.0
+        sorted_rumors = sorted(self.seen_rumors, key=get_timestamp)
+        newest_rumors = sorted_rumors[-10:]
+        return {
+            "node_id":       self.node_id,
+            "is_bootstrap":  self.is_bootstrap,
+            "global_table":  list(self.global_table),
+            "neighbor_map":  list(self.neighbor_map),
+            "current_round": self.round,
+            "phase":         self.phase.value,
+            "seen_rumors":   newest_rumors,
+            "heartbeat_seen": list(self.heartbeat_seen),
+        }

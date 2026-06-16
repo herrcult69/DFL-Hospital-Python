@@ -1,13 +1,14 @@
-import logging
+import logging, time
+import asyncio
 import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 
 from .config import NetworkConfig
 from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse, Rumor, RumorType
-from .state import NodeState
+from .state import NodeState, Phase
 from .graph import GraphManager
 from .gossip import GossipEngine
 
@@ -18,16 +19,74 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkConfig) -> FastAPI:
 
     http_client: httpx.AsyncClient | None = None
-
+    gossip = GossipEngine(state=state, config=config)
+    
     @asynccontextmanager
     async def lifespan(app: FastAPI): # Fast API Startup code
         nonlocal http_client
         http_client = httpx.AsyncClient(timeout=config.http_timeout)
+        async def _heartbeat_loop():
+            while state.phase == Phase.PHASE_1:   # stops automatically when phase advances
+                await gossip.originate_heartbeat()
+                await asyncio.sleep(config.heartbeat_interval)
+
+        phase1_start = time.time()
+        async def _stability_timer():
+            while True:
+                await asyncio.sleep(1.0)  # check every second
+
+                now              = time.time()
+                floor_met        = (now - phase1_start) >= config.phase1_floor
+                table_stable     = (now - state.last_table_change_time) >= config.stability_window
+
+                if floor_met and table_stable:
+                    log.info("Stability timer fired — locking table")
+                    await _end_phase1()
+                    if state.phase == Phase.PHASE_2:   # only exit if we actually advanced
+                        return  # task is done
+
+        async def _end_phase1():
+            # Step 1: Lock the table
+            state.table_locked = True
+            log.info(f"Table locked: {state.global_table}")
+
+            # Step 2: Dead node cleanup
+            dead = [n for n in state.global_table if n not in state.heartbeat_seen]
+            for node in dead:
+                log.warning(f"Dead node detected (no heartbeat): {node}")
+                state.global_table.remove(node)
+                
+            # Minimum viable network check
+            if len(state.global_table) < 2:              # ← adjust threshold as needed
+                log.warning("Not enough nodes to proceed — holding, unlocking table")
+                state.table_locked = False               # unlock so new joins can come in
+                state.last_table_change_time = time.time()  # reset stability window
+                # heartbeat loop keeps running since phase never flipped
+                return                                   # timer task exits, but heartbeat continues
+
+            # Step 3: Form Ring Map — sort locked table, derive left/right neighbors
+            ring = state.global_table  # already sorted (add_node keeps it sorted)
+            idx  = ring.index(state.node_id)
+            n    = len(ring)
+            state.ring_left  = ring[(idx - 1) % n]
+            state.ring_right = ring[(idx + 1) % n]
+            log.info(f"Ring formed — left: {state.ring_left} | right: {state.ring_right}")
+
+            # Step 4 onward: READY barrier — next feature
+            state.phase = Phase.PHASE_2   # ← PREMATURELY CHANGE PHASE PLACE HOLDER, stops heartbeat loop
+            log.info("Phase flipped to PHASE_2 (READY barrier not yet implemented)")
+
+        timer_task    = asyncio.create_task(_stability_timer())
+        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
         yield
+
+        heartbeat_task.cancel()
+        timer_task.cancel()
         await http_client.aclose() # Fast API Close code
 
     app = FastAPI(title="DFL Bootstrap Node", lifespan=lifespan)
-    gossip = GossipEngine(state=state, config=config)
+    
 
     def _gossip_addr(node_id: str) -> str:
         host, gossip_port, _ = node_id.split(":")
@@ -47,6 +106,9 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
 
     @app.post("/join", response_model=JoinResponse)
     async def join(req: JoinRequest):
+        if state.table_locked:                      
+            return Response(status_code=423)            # Locked — Phase 1 is closing
+
         rewire_map = graph.register(req.node_id)
         state.add_node(req.node_id)
         
@@ -72,6 +134,7 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
             neighbors=neighbors,
             global_table=list(state.global_table),
             message=f"Welcome! Network has {len(state.global_table)} node(s).",
+            round=state.round,  
         )
     @app.post("/gossip")
     async def gossip_receive(rumor: Rumor, request: Request):

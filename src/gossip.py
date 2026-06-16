@@ -3,7 +3,7 @@ GossipEngine — runs on every node (bootstrap and worker).
 Handles SIR rumor spreading.
 """
 import logging
-import httpx
+import httpx, time
 
 from .models import Rumor, RumorType
 from .state import NodeState
@@ -24,7 +24,7 @@ class GossipEngine:
 
     async def spread(self, rumor: Rumor, exclude: set[str] | None = None) -> None:
         """Send rumor to all K neighbors except excluded node_ids."""
-        targets = self.state.neighbor_map - exclude
+        targets = self.state.neighbor_map - (exclude or set()) 
         async with httpx.AsyncClient(timeout=self.config.http_timeout) as client:
             for neighbor in targets:
                 try:
@@ -78,3 +78,18 @@ class GossipEngine:
         elif rumor.type == RumorType.HEARTBEAT:
             self.state.heartbeat_seen.add(rumor.originator_id)
             log.debug(f"Heartbeat received from: {rumor.originator_id}")
+    
+    async def originate_heartbeat(self) -> None:
+        """Build and spread a fresh heartbeat. beat is a monotonic counter."""
+        ts = time.time()
+        rumor = Rumor(
+            type=RumorType.HEARTBEAT,
+            originator_id=self.state.node_id,
+            round=self.state.round,
+            rumor_id=f"HEARTBEAT:{self.state.node_id}:{self.state.round}:{ts}",
+            ttl=self.config.gossip_ttl,
+        )
+        # Mark it seen locally so we don't re-process our own heartbeat
+        self.state.mark_seen(rumor.rumor_id)
+        self.state.heartbeat_seen.add(self.state.node_id)  # count ourselves as alive
+        await self.spread(rumor)
