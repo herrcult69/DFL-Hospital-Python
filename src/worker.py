@@ -17,6 +17,7 @@ from .state import NodeState, Phase
 
 from .gossip import GossipEngine
 from .models import Rumor, RumorType
+from .ring_transfer import RingPhase
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -139,14 +140,31 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                         state.last_table_change_time = time.time()
                         return False               # ← failed, don't flip
                     return True                    # ← reduced set, still proceed
+        async def _phase2_loop():
+            while state.phase == Phase.PHASE_1:
+                await asyncio.sleep(0.5)
 
-    
-                
+            from pathlib import Path
+            model_path = Path(
+                f"./models/round{state.round}"
+                f"_{state.node_id.replace(':', '_')}.safetensors"
+            )
+            if not model_path.exists():
+                log.info(f"Round {state.round}: no local model — skipping Phase 2 & 3 to PHASE_4")
+                state.phase = Phase.PHASE_4
+                return
+
+            if state.phase == Phase.PHASE_2:
+                ring_phase = RingPhase(state=state, config=config, gossip=gossip)
+                await ring_phase.run()
+
         timer_task    = asyncio.create_task(_stability_timer())
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
+        phase2_task    = asyncio.create_task(_phase2_loop())
         yield
         heartbeat_task.cancel()
         timer_task.cancel()
+        phase2_task.cancel()
 
     app = FastAPI(title="DFL Worker Node", lifespan=lifespan)
 
