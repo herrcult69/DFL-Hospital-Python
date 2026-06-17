@@ -19,13 +19,19 @@ def collect_and_aggregate(
     os.makedirs(work_dir, exist_ok=True)
 
     state_dicts: dict = {}
+    dataset_sizes: dict = {}
 
     # Own adapter — load from disk (no HTTP to self)
     if self_node_id is not None:
         local_path = os.path.join(output_dir, "adapter_model.safetensors")
         if os.path.exists(local_path):
             state_dicts[self_node_id] = load_file(local_path)
-            print(f"[FedIT] Loaded own adapter from disk (Node {self_node_id})")
+            try:
+                from lib.local_trainer import get_dataset_size
+                dataset_sizes[self_node_id] = get_dataset_size()
+            except Exception:
+                dataset_sizes[self_node_id] = 1
+            print(f"[FedIT] Loaded own adapter from disk (Node {self_node_id}) with dataset size {dataset_sizes[self_node_id]}")
         else:
             print(f"[FedIT] Warning: Local adapter missing at {local_path}. Skipping self.")
 
@@ -39,11 +45,16 @@ def collect_and_aggregate(
         try:
             resp = requests.get(url, stream=True, timeout=120)
             resp.raise_for_status()
+            
+            # Read dataset size from response headers
+            peer_size = int(resp.headers.get("X-Dataset-Size", 1))
+            dataset_sizes[node_id] = peer_size
+            
             with open(save_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
             state_dicts[node_id] = load_file(save_path)
-            print(f"[FedIT] Collected adapter from Node {node_id}")
+            print(f"[FedIT] Collected adapter from Node {node_id} with dataset size {peer_size}")
         except Exception as e:
             print(f"[FedIT] Failed to download from Node {node_id} @ {addr}: {e}")
 
@@ -52,7 +63,7 @@ def collect_and_aggregate(
         shutil.rmtree(work_dir, ignore_errors=True)
         return ""
 
-    merged = _fedit_merge(state_dicts, rank=8)
+    merged = _fedit_merge(state_dicts, rank=8, dataset_sizes=dataset_sizes)
     merged = {k: v.contiguous() for k, v in merged.items()}
 
     os.makedirs("output", exist_ok=True)
@@ -72,11 +83,15 @@ def collect_and_aggregate(
     return local_adapter_path
 
 
-def _fedit_merge(state_dicts: dict, rank: int) -> dict:
-    """FedAvg for LoRA: avg(B_i @ A_i), then SVD re-decompose per layer."""
+def _fedit_merge(state_dicts: dict, rank: int, dataset_sizes: dict) -> dict:
+    """FedAvg for LoRA with dataset size weighting: weighted_avg(B_i @ A_i), then SVD re-decompose per layer."""
     all_keys = list(next(iter(state_dicts.values())).keys())
     merged = {}
     processed_keys: set = set()
+
+    total_samples = sum(dataset_sizes.get(n, 1) for n in state_dicts)
+    weights = {n: dataset_sizes.get(n, 1) / max(total_samples, 1) for n in state_dicts}
+    print(f"[FedIT] Merge weights: {weights}")
 
     lora_prefixes = {
         k.replace(".lora_A.weight", "")
@@ -90,10 +105,10 @@ def _fedit_merge(state_dicts: dict, rank: int) -> dict:
 
         if key_A in all_keys and key_B in all_keys:
             delta_sum = sum(
-                state_dicts[n][key_B].float() @ state_dicts[n][key_A].float()
+                (state_dicts[n][key_B].float() @ state_dicts[n][key_A].float()) * weights[n]
                 for n in state_dicts
             )
-            delta_avg = delta_sum / len(state_dicts)
+            delta_avg = delta_sum
 
             U, S, Vh = torch.linalg.svd(delta_avg, full_matrices=False)
             sqrt_S   = torch.sqrt(S[:rank].clamp(min=1e-8))
@@ -105,7 +120,7 @@ def _fedit_merge(state_dicts: dict, rank: int) -> dict:
     for k in all_keys:
         if k not in processed_keys:
             merged[k] = (
-                sum(state_dicts[n][k].float() for n in state_dicts) / len(state_dicts)
+                sum(state_dicts[n][k].float() * weights[n] for n in state_dicts)
             ).contiguous().to(torch.float16)
 
     return merged

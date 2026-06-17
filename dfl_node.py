@@ -42,7 +42,7 @@ import lib.inference      as inference
 
 local_trainer.NODE_ID      = NODE_ID
 local_trainer.OUTPUT_DIR   = OUTPUT_DIR
-local_trainer.DATASET_PATH = f"dataset/part{NODE_ID}.jsonl"
+local_trainer.DATASET_PATH = f"dataset/node_{NODE_ID}.json"
 
 from lib.state      import get_state
 from lib.round_loop import NodeConfig, run as run_rounds
@@ -74,12 +74,18 @@ def weights():
             # because the weights on disk represent at least the requested round's completion.
             pass
 
-    return send_file(
+    response = send_file(
         os.path.abspath(path),
         mimetype="application/octet-stream",
         as_attachment=True,
         download_name=f"adapter_node_{NODE_ID}.safetensors",
     )
+    try:
+        size = local_trainer.get_dataset_size()
+    except Exception:
+        size = 1
+    response.headers["X-Dataset-Size"] = str(size)
+    return response
 
 @app.route("/predict", methods=["POST"])
 def predict():
