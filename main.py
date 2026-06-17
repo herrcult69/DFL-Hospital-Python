@@ -31,6 +31,7 @@ def parse_args():
     p.add_argument("--k",             type=int, default=4)
     p.add_argument("--bootstrap",     action="store_true")
     p.add_argument("--bootstrap-url", default="127.0.0.1:8000")
+    p.add_argument("--model-dir",     default="./models", help="Directory for local LoRA adapters")
     return p.parse_args()
 
 
@@ -42,6 +43,7 @@ def main():
         host=args.host,
         port=args.port,
         grpc_port=args.grpc_port,
+        model_dir=args.model_dir,
     )
 
     if args.bootstrap:

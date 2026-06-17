@@ -11,6 +11,7 @@ from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, St
 from .state import NodeState, Phase
 from .graph import GraphManager
 from .gossip import GossipEngine
+from .ring_transfer import RingPhase
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -114,17 +115,46 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                         state.ready_set              = set()
                         state.last_table_change_time = time.time()
                         return False               # ← failed, don't flip
+                    # recompute ring with the cleaned table
+                    idx = state.global_table.index(state.node_id)
+                    n   = len(state.global_table)
+                    state.ring_left  = state.global_table[(idx - 1) % n]
+                    state.ring_right = state.global_table[(idx + 1) % n]
+                    log.info(f"Ring recomputed after READY eviction — left: {state.ring_left} | right: {state.ring_right}")
                     return True                    # ← reduced set, still proceed
 
-           
+        async def _phase2_loop():
+            # wait for Phase 1 to finish
+            while state.phase == Phase.PHASE_1:
+                await asyncio.sleep(0.5)
+
+            # Round 0 skip — no LoRA adapter exists yet, jump straight to PHASE_4
+            from pathlib import Path
+            model_path = Path(
+                f"./models/round{state.round}"
+                f"_{state.node_id.replace(':', '_')}.safetensors"
+            )
+            if not model_path.exists():
+                log.info(f"Round {state.round}: no local model — skipping Phase 2 & 3 to PHASE_4")
+                state.phase = Phase.PHASE_4
+                return
+
+            if state.phase == Phase.PHASE_2:
+                ring_phase = RingPhase(state=state, config=config, gossip=gossip)
+                await ring_phase.run()
+
+
+    
 
         timer_task    = asyncio.create_task(_stability_timer())
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
+        phase2_task    = asyncio.create_task(_phase2_loop())   # ← NEW   
 
         yield
 
         heartbeat_task.cancel()
         timer_task.cancel()
+        phase2_task.cancel()  
         await http_client.aclose() # Fast API Close code
 
     app = FastAPI(title="DFL Bootstrap Node", lifespan=lifespan)
