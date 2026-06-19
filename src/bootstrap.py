@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse, Response
 
 from .config import NetworkConfig
-from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse, Rumor, RumorType
+from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse, Rumor, RumorType, EvictRequest
 from .state import NodeState, Phase
 from .graph import GraphManager
 from .gossip import GossipEngine
@@ -15,7 +15,11 @@ from .ring_transfer import RingPhase
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+def _handle_task_exception(loop, context):
+    msg = context.get("exception", context["message"])
+    log.error(f"Unhandled async task exception: {msg}", exc_info=context.get("exception"))
 
+asyncio.get_event_loop().set_exception_handler(_handle_task_exception)
 
 def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkConfig) -> FastAPI:
 
@@ -26,25 +30,29 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
     async def lifespan(app: FastAPI): # Fast API Startup code
         nonlocal http_client
         http_client = httpx.AsyncClient(timeout=config.http_timeout)
+        
         async def _heartbeat_loop():
-            while state.phase == Phase.PHASE_1:   # stops automatically when phase advances
-                await gossip.originate_heartbeat()
+            while True:
+                if state.phase == Phase.PHASE_1:
+                    await gossip.originate_heartbeat()
                 await asyncio.sleep(config.heartbeat_interval)
 
-        phase1_start = time.time()
         async def _stability_timer():
             while True:
-                await asyncio.sleep(1.0)  # check every second
+                await asyncio.sleep(1.0)
+
+                # Only active during PHASE_1
+                if state.phase != Phase.PHASE_1:
+                    await asyncio.sleep(2.0)   # idle poll — wait for reset
+                    continue
 
                 now              = time.time()
-                floor_met        = (now - phase1_start) >= config.phase1_floor
+                floor_met        = (now - state.last_table_change_time) >= config.phase1_floor
                 table_stable     = (now - state.last_table_change_time) >= config.stability_window
 
-                if floor_met and table_stable:
-                    log.info("Stability timer fired — locking table")
+                if floor_met and table_stable and not state.table_locked:
+                    log.info(f"Stability timer fired — round {state.round}, locking table")
                     await _end_phase1()
-                    if state.phase == Phase.PHASE_2:   # only exit if we actually advanced
-                        return  # task is done
 
         async def _end_phase1():
             # Step 1: Lock the table
@@ -56,6 +64,16 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
             for node in dead:
                 log.warning(f"Dead node detected (no heartbeat): {node}")
                 state.global_table.remove(node)
+
+            # Step 3 -> REwiring the network
+            for node in dead:
+                if node in graph.adj:
+                    affected = graph.evict(node)
+                    for affected_node, new_neighbors in affected.items():
+                        if affected_node == state.node_id:
+                            state.neighbor_map = set(new_neighbors)
+                        else:
+                            await _send_rewire(affected_node, new_neighbors)
                 
             # Minimum viable network check
             if len(state.global_table) < 2:              # ← adjust threshold as needed
@@ -65,8 +83,9 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                 # heartbeat loop keeps running since phase never flipped
                 return                                   # timer task exits, but heartbeat continues
 
+            
             # Step 3: Form Ring Map — sort locked table, derive left/right neighbors
-            ring = state.global_table  # already sorted (add_node keeps it sorted)
+            ring = state.global_table  # already sorted (add_node keeps it sorted) """" Duplicated CODED SKIPIING""""
             idx  = ring.index(state.node_id)
             n    = len(ring)
             state.ring_left  = ring[(idx - 1) % n]
@@ -83,7 +102,7 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                 round=state.round,
                 rumor_id=f"READY:{state.node_id}:{state.round}:{ts}",
                 ttl=config.gossip_ttl,
-                payload={"target_phase": "PHASE_2"},
+                payload={"target_phase": "PHASE_2", "phase2_start_ts": ts},
             )
             state.mark_seen(ready_rumor.rumor_id)
             await gossip.spread(ready_rumor)
@@ -124,31 +143,39 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                     return True                    # ← reduced set, still proceed
 
         async def _phase2_loop():
-            # wait for Phase 1 to finish
-            while state.phase == Phase.PHASE_1:
-                await asyncio.sleep(0.5)
+            while True:   # outer loop drives all rounds
+                # Wait for Phase 1 to complete
+                while state.phase == Phase.PHASE_1:
+                    await asyncio.sleep(0.5)
 
-            # Round 0 skip — no LoRA adapter exists yet, jump straight to PHASE_4
-            from pathlib import Path
-            model_path = Path(
-                f"./models/round{state.round}"
-                f"_{state.node_id.replace(':', '_')}.safetensors"
-            )
-            if not model_path.exists():
-                log.info(f"Round {state.round}: no local model — skipping Phase 2 & 3 to PHASE_4")
-                state.phase = Phase.PHASE_4
-                return
+                if state.phase == Phase.PHASE_2:
+                    ring_phase = RingPhase(state=state, config=config, gossip=gossip)
+                    await ring_phase.run()
 
-            if state.phase == Phase.PHASE_2:
-                ring_phase = RingPhase(state=state, config=config, gossip=gossip)
-                await ring_phase.run()
+                if state.phase == Phase.PHASE_3:
+                    from .phase3 import AggregationPhase
+                    safe       = state.node_id.replace(":", "_")
+                    chunk_dir  = Path(f"./chunks_{safe}")
+                    agg_phase  = AggregationPhase(state=state, config=config, gossip=gossip)
+                    await agg_phase.run(chunk_dir=chunk_dir)
 
+                if state.phase == Phase.PHASE_4:
+                    from .phase4 import RoundCompletionPhase
+                    safe       = state.node_id.replace(":", "_")
+                    chunk_dir  = Path(f"./chunks_{safe}")
+                    p4         = RoundCompletionPhase(state=state, config=config, gossip=gossip)
+                    await p4.run(chunk_dir=chunk_dir)
+                    # p4.run() calls reset_phase1() → state.phase == PHASE_1 again
+                    # → outer while True loops back, re-enters Phase 1 wait
 
-    
+                if config.total_rounds and state.round >= config.total_rounds:
+                    log.info(f"All {config.total_rounds} rounds complete — node going IDLE")
+                    state.phase = Phase.IDLE
+                    return
 
         timer_task    = asyncio.create_task(_stability_timer())
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
-        phase2_task    = asyncio.create_task(_phase2_loop())   # ← NEW   
+        phase2_task    = asyncio.create_task(_phase2_loop())  
 
         yield
 
@@ -230,6 +257,29 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
             "is_k_regular": graph.is_k_regular(),
         }
 
+
+
+    @app.post("/rewire-evict")
+    async def rewire_evict(req: EvictRequest):
+        """
+        Called at the start of each round by bootstrap itself to remove
+        dead nodes from the K-graph and re-wire survivors.
+        """
+        rewired: dict[str, list[str]] = {}
+        for dead in req.dead_nodes:
+            if dead not in graph.adj:
+                continue
+            affected = graph.evict(dead)
+            rewired.update(affected)
+
+        # Notify all affected alive nodes of their new neighbor lists
+        for node_id, new_neighbors in rewired.items():
+            if node_id == state.node_id:
+                state.neighbor_map = set(new_neighbors)
+            else:
+                await _send_rewire(node_id, new_neighbors)
+
+        return {"rewired": rewired, "dead_removed": req.dead_nodes}
 
 
     @app.get("/status-page", response_class=HTMLResponse)

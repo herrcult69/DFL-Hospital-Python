@@ -85,6 +85,59 @@ class GraphManager:
 
         return affected
 
+    # ── Evict ────────────────────────────────────────────────────────────────
+
+    def evict(self, dead_node: str) -> dict[str, list[str]]:
+        """
+        Remove dead_node from the graph and re-wire its former neighbors
+        so the graph stays as close to K-regular as possible.
+
+        Strategy:
+          - Remove dead_node and all its edges.
+          - Its former neighbors now have degree K-1 (or less).
+          - For each under-degree survivor, try to wire it to another
+            under-degree survivor it's not already connected to.
+          - Returns {affected_node_id: [new_neighbor_list]}.
+        """
+        if dead_node not in self.adj:
+            return {}
+
+        former_neighbors = list(self.adj[dead_node])
+        affected: dict[str, list[str]] = {}
+
+        # Step 1: Remove dead_node from all neighbors' adj lists
+        for nbr in former_neighbors:
+            self.adj[nbr].discard(dead_node)
+
+        # Step 2: Remove dead_node itself
+        del self.adj[dead_node]
+
+        # Step 3: Pair up under-degree nodes greedily
+        under = [n for n in self.adj if len(self.adj[n]) < self.k]
+        random.shuffle(under)
+
+        i = 0
+        while i < len(under) - 1:
+            a = under[i]
+            for j in range(i + 1, len(under)):
+                b = under[j]
+                if b not in self.adj[a] and a not in self.adj[b]:
+                    self.adj[a].add(b)
+                    self.adj[b].add(a)
+                    affected[a] = list(self.adj[a])
+                    affected[b] = list(self.adj[b])
+                    under.pop(j)
+                    break
+            i += 1
+
+        # Mark any nodes that lost edges as affected (even if not re-wired)
+        for nbr in former_neighbors:
+            if nbr in self.adj and nbr not in affected:
+                affected[nbr] = list(self.adj[nbr])
+
+        log.info(f"Evicted {dead_node} | re-wired: {list(affected.keys())}")
+        return affected
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def get_neighbors(self, node_id: str) -> list[str]:

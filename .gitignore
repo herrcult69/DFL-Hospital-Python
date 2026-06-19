@@ -23,3 +23,5 @@ env/
 *.swo
 .env
 .github/
+
+DFL-Hospital-Python-model/

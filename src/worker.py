@@ -21,6 +21,11 @@ from .ring_transfer import RingPhase
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+def _handle_task_exception(loop, context):
+    msg = context.get("exception", context["message"])
+    log.error(f"Unhandled async task exception: {msg}", exc_info=context.get("exception"))
+
+asyncio.get_event_loop().set_exception_handler(_handle_task_exception)
 
 
 def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
@@ -48,8 +53,9 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                 log.error(f"Could not reach Bootstrap at {config.bootstrap_url}: {e}")
                 
         async def _heartbeat_loop():
-            while state.phase == Phase.PHASE_1:
-                await gossip.originate_heartbeat()
+            while True:
+                if state.phase == Phase.PHASE_1:
+                    await gossip.originate_heartbeat()
                 await asyncio.sleep(config.heartbeat_interval)
         
 
@@ -106,7 +112,7 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                 round=state.round,
                 rumor_id=f"READY:{state.node_id}:{state.round}:{ts}",
                 ttl=config.gossip_ttl,
-                payload={"target_phase": "PHASE_2"},
+                payload={"target_phase": "PHASE_2", "phase2_start_ts": ts},
             )
             state.mark_seen(ready_rumor.rumor_id)
             await gossip.spread(ready_rumor)
@@ -141,22 +147,33 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                         return False               # ← failed, don't flip
                     return True                    # ← reduced set, still proceed
         async def _phase2_loop():
-            while state.phase == Phase.PHASE_1:
-                await asyncio.sleep(0.5)
+            while True:
+                while state.phase == Phase.PHASE_1:
+                    await asyncio.sleep(0.5)
 
-            from pathlib import Path
-            model_path = Path(
-                f"./models/round{state.round}"
-                f"_{state.node_id.replace(':', '_')}.safetensors"
-            )
-            if not model_path.exists():
-                log.info(f"Round {state.round}: no local model — skipping Phase 2 & 3 to PHASE_4")
-                state.phase = Phase.PHASE_4
-                return
+                if state.phase == Phase.PHASE_2:
+                    ring_phase = RingPhase(state=state, config=config, gossip=gossip)
+                    await ring_phase.run()
 
-            if state.phase == Phase.PHASE_2:
-                ring_phase = RingPhase(state=state, config=config, gossip=gossip)
-                await ring_phase.run()
+                if state.phase == Phase.PHASE_3:
+                    from .phase3 import AggregationPhase
+                    safe      = state.node_id.replace(":", "_")
+                    chunk_dir = Path(f"./chunks_{safe}")
+                    agg_phase = AggregationPhase(state=state, config=config, gossip=gossip)
+                    await agg_phase.run(chunk_dir=chunk_dir)
+
+                if state.phase == Phase.PHASE_4:
+                    from .phase4 import RoundCompletionPhase
+                    safe      = state.node_id.replace(":", "_")
+                    chunk_dir = Path(f"./chunks_{safe}")
+                    p4        = RoundCompletionPhase(state=state, config=config, gossip=gossip)
+                    await p4.run(chunk_dir=chunk_dir)
+                    # reset_phase1() sets phase → PHASE_1, outer while True loops back
+
+                if config.total_rounds and state.round >= config.total_rounds:
+                    log.info(f"All {config.total_rounds} rounds complete — node going IDLE")
+                    state.phase = Phase.IDLE
+                    return
 
         timer_task    = asyncio.create_task(_stability_timer())
         heartbeat_task = asyncio.create_task(_heartbeat_loop())

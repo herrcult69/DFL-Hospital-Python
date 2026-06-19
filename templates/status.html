@@ -147,8 +147,23 @@
     </div>
     
     <div class="card">
-      <h2>Ready Set</h2>
+      <h2>Ready Set (PHASE_2)</h2>
       <div class="global-table" id="ready-set">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Ready Set (PHASE_3)</h2>
+      <div class="global-table" id="ready-set-p3">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>No Model Set</h2>
+      <div class="global-table" id="no-model-set">Loading...</div>
+    </div>
+    
+    <div class="card">
+      <h2>Dead This Round</h2>
+      <div class="global-table" id="dead-this-round">Loading...</div>
     </div>
     
     <div class="card">
@@ -198,12 +213,31 @@
         document.getElementById('ring-left').textContent = data.ring_left || '—';
         document.getElementById('ring-right').textContent = data.ring_right || '—';
         
-        // Display ready set
+        // Display ready set (PHASE_2)
         const readyHtml = data.ready_set.map(node => {
           const isSelf = node === data.node_id;
           return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
         }).join('') || 'None ready yet';
         document.getElementById('ready-set').innerHTML = readyHtml;
+        
+        // Display ready set (PHASE_3)
+        const readyP3Html = data.ready_set_p3.map(node => {
+          const isSelf = node === data.node_id;
+          return `<span class="node-tag${isSelf ? ' self' : ''}">${node}</span>`;
+        }).join('') || 'None ready yet';
+        document.getElementById('ready-set-p3').innerHTML = readyP3Html;
+        
+        // Display no model set
+        const noModelHtml = data.no_model_set.map(node => {
+          return `<span class="node-tag">${node}</span>`;
+        }).join('') || 'None';
+        document.getElementById('no-model-set').innerHTML = noModelHtml;
+        
+        // Display dead this round
+        const deadHtml = data.dead_this_round.map(node => {
+          return `<span class="node-tag">${node}</span>`;
+        }).join('') || 'None';
+        document.getElementById('dead-this-round').innerHTML = deadHtml;
         
         // Display neighbors (full node ID)
         const neighborHtml = data.neighbor_map.map(node => {

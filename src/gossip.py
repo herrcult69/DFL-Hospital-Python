@@ -84,13 +84,32 @@ class GossipEngine:
             target = rumor.payload.get("target_phase")
             if rumor.originator_id not in self.state.global_table:
                 return
+            
             if target == Phase.PHASE_2.value:
                 self.state.ready_set.add(rumor.originator_id)
+                ts = rumor.payload.get("phase2_start_ts", 0.0)
+                if ts > 0:
+                    if self.state.phase2_start_ts == 0.0:
+                        self.state.phase2_start_ts = ts
+                    else:
+                        self.state.phase2_start_ts = min(self.state.phase2_start_ts, ts)
                 log.debug(f"READY(PHASE_2) from {rumor.originator_id} | size: {len(self.state.ready_set)}")
+                
             elif target == Phase.PHASE_3.value:
                 self.state.ready_set_p3.add(rumor.originator_id)
                 log.debug(f"READY(PHASE_3) from {rumor.originator_id} | size: {len(self.state.ready_set_p3)}")
-
+                
+            elif target == Phase.PHASE_4.value:
+                self.state.ready_set_p4.add(rumor.originator_id)
+                log.debug(f"READY(PHASE_4) from {rumor.originator_id} | size: {len(self.state.ready_set_p4)}")
+            elif target == Phase.PHASE_1.value:
+                self.state.ready_set_p1.add(rumor.originator_id)
+                log.debug(f"READY(PHASE_1) from {rumor.originator_id} | size: {len(self.state.ready_set_p1)}")
+                
+        elif rumor.type == RumorType.NO_MODEL:
+            if rumor.originator_id in self.state.global_table:
+                self.state.no_model_set.add(rumor.originator_id)
+                log.info(f"Node {rumor.originator_id} has no model this round — excluded from expected")
     async def originate_heartbeat(self) -> None:
         """Build and spread a fresh heartbeat. beat is a monotonic counter."""
         ts = time.time()

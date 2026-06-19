@@ -10,6 +10,7 @@ class Phase(Enum):
     PHASE_2 = "PHASE_2"
     PHASE_3 = "PHASE_3"
     PHASE_4 = "PHASE_4"
+    IDLE    = "IDLE"
 
 
 @dataclass
@@ -26,10 +27,14 @@ class NodeState:
     heartbeat_seen:         set[str]   = field(default_factory=set)
     table_locked:           bool       = False
     last_table_change_time: float      = field(default_factory=time.time)
-    ready_set:              set[str]   = field(default_factory=set)
+    ready_set:              set[str]   = field(default_factory=set) ## 1 -> 2
+    ready_set_p3:           set[str]   = field(default_factory=set) ## 2 -> 3
+    ready_set_p4:           set[str] = field(default_factory=set)   # Phase 3→4 barrier
+    ready_set_p1:           set[str] = field(default_factory=set)  # Phase 4→1 barrier
     ready_timeout:          float      = 0.0
     dead_this_round:        set[str]   = field(default_factory=set) 
-    ready_set_p3:            set[str]   = field(default_factory=set) 
+    no_model_set:           set[str]   = field(default_factory=set)   # alive but no LoRA
+    phase2_start_ts:        float      = 0.0
 
     def add_node(self, node_id: str) -> bool:
         """Add a node to the global table. Returns True if it was new."""
@@ -55,9 +60,14 @@ class NodeState:
         self.seen_rumors            = set()
         self.phase                  = Phase.PHASE_1
         self.table_locked           = False
+        self.ready_set              = set()
         self.dead_this_round        = set()   
         self.ready_set_p3           = set()
+        self.no_model_set           = set()
+        self.ready_set_p4           = set()
+        self.ready_set_p1 = set()
         self.last_table_change_time = time.time()
+        self.phase2_start_ts = 0.0
 
     def snapshot(self) -> dict:
         def get_timestamp(rumor_id: str) -> float:
@@ -69,16 +79,20 @@ class NodeState:
 
         sorted_rumors = sorted(self.seen_rumors, key=get_timestamp)
         return {
-            "node_id":        self.node_id,
-            "is_bootstrap":   self.is_bootstrap,
-            "global_table":   list(self.global_table),
-            "neighbor_map":   list(self.neighbor_map),
-            "ring_left":      self.ring_left,
-            "ring_right":     self.ring_right,
-            "table_locked":   self.table_locked,
-            "ready_set":      list(self.ready_set),
-            "current_round":  self.round,
-            "phase":          self.phase.value,
-            "seen_rumors":    sorted_rumors[-10:],
-            "heartbeat_seen": list(self.heartbeat_seen),
+            "node_id":          self.node_id,
+            "is_bootstrap":     self.is_bootstrap,
+            "global_table":     list(self.global_table),
+            "neighbor_map":     list(self.neighbor_map),
+            "ring_left":        self.ring_left,
+            "ring_right":       self.ring_right,
+            "table_locked":     self.table_locked,
+            "ready_set":        list(self.ready_set),
+            "ready_set_p3":     list(self.ready_set_p3),
+            "ready_set_p4":     list(self.ready_set_p4),
+            "no_model_set":     list(self.no_model_set),
+            "dead_this_round":  list(self.dead_this_round),
+            "current_round":    self.round,
+            "phase":            self.phase.value,
+            "seen_rumors":      sorted_rumors[-10:],
+            "heartbeat_seen":   list(self.heartbeat_seen),
         }
