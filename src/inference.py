@@ -23,7 +23,7 @@ def run_inference(symptoms: str, output_dir: str) -> str:
     _ensure_loaded(output_dir)
 
     with _model_lock:
-        prompt = f"Question: {symptoms}\nReasoning:"
+        prompt = f"<|im_start|>user\n{symptoms}<|im_end|>\n<|im_start|>assistant\n"
         inputs = _tokenizer(
             prompt,
             return_tensors="pt",
@@ -31,7 +31,7 @@ def run_inference(symptoms: str, output_dir: str) -> str:
         with torch.no_grad():
             outputs = _model.generate(
                 **inputs,
-                max_new_tokens=150,
+                max_new_tokens=256,
                 pad_token_id=_tokenizer.eos_token_id,
                 do_sample=True,
                 temperature=0.7,
@@ -41,7 +41,8 @@ def run_inference(symptoms: str, output_dir: str) -> str:
         # Decode only the newly generated tokens
         input_length = inputs.input_ids.shape[1]
         generated_tokens = outputs[0][input_length:]
-        return _tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+        decoded = _tokenizer.decode(generated_tokens, skip_special_tokens=False).strip()
+        return decoded.split("<|im_end|>", 1)[0].strip()
 
 
 def invalidate_cache():
@@ -58,10 +59,10 @@ def _ensure_loaded(output_dir: str):
     with _model_lock:
         if _model is not None:
             return
-        tok = GPT2Tokenizer.from_pretrained("distilbert/distilgpt2")
+        tok = GPT2Tokenizer.from_pretrained("openai-community/gpt2")
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
-        base = GPT2LMHeadModel.from_pretrained("distilbert/distilgpt2")
+        base = GPT2LMHeadModel.from_pretrained("openai-community/gpt2")
         adapter_path = os.path.join(output_dir, "adapter_model.safetensors")
         if os.path.exists(adapter_path):
             model = PeftModel.from_pretrained(base, output_dir)

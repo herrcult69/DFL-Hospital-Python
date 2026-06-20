@@ -41,14 +41,18 @@ _GRPC_OPTIONS = [
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _get_dataset_size(config: NetworkConfig) -> int:
-    """Count lines in this node's dataset file (cheap I/O, not blocking)."""
+    """Count lines or JSON objects in this node's dataset file."""
     try:
         import json
         p = config.dataset_path
         if not Path(p).exists():
             return 0
-        with open(p, encoding="utf-8") as f:
-            return sum(1 for _ in f)
+        if Path(p).suffix == ".json":
+            with open(p, encoding="utf-8") as f:
+                return len(json.load(f))
+        else:
+            with open(p, encoding="utf-8") as f:
+                return sum(1 for _ in f)
     except Exception:
         return 0
 

@@ -255,10 +255,10 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
 
         def _infer():
             # ── TESTING MODE (comment out for real) ──────────────────────────
-            return f"[STUB] Echo from {state.node_id} round {state.round}: {req.message}"
+            # return f"[STUB] Echo from {state.node_id} round {state.round}: {req.message}"
             # ── REAL IMPLEMENTATION (uncomment for production) ────────────────
-            # from .lib.inference import run_inference
-            # return run_inference(req.message, str(config.model_path))
+            from .inference import run_inference
+            return run_inference(req.message, str(config.model_path))
 
         try:
             result = await loop.run_in_executor(None, _infer)

@@ -13,6 +13,7 @@ from .state   import NodeState, Phase
 from .gossip  import GossipEngine
 from .models  import Rumor, RumorType
 from .aggregator import aggregate
+from .ring_transfer import _get_dataset_size
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class AggregationPhase:
                     output_dir    = output_dir,
                     participants  = participants,
                     has_own_model = has_own,
-                    dataset_size  = 1,
+                    dataset_size  = _get_dataset_size(self.config),
                     peer_sizes    = self.state.dataset_sizes,
                 )
             except Exception:
