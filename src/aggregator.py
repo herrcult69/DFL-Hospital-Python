@@ -18,10 +18,10 @@ def aggregate(
     round_num:      int,
     chunk_dir:      Path,
     output_dir:     Path,
-    participants:   list[str],   # global_table minus dead_this_round minus no_model_set
+    participants:   list[str],
     has_own_model:  bool = True,
     dataset_size:   int  = 1,
-    dataset_sizes:  dict[str, int] | None = None,  # ← add this
+    peer_sizes:     dict[str, int] | None = None,
 ) -> Path | None:
     """
     Load all .safetensors files from chunk_dir for this round.
@@ -30,15 +30,16 @@ def aggregate(
     Returns path to merged file, or None if aggregation failed.
     """
     node_safe = node_id.replace(":", "_")
-    state_dicts:   dict = {}
-    dataset_sizes: dict = {}
+    state_dicts:  dict = {}
+    sizes:        dict = {}
+    peer_sizes = peer_sizes or {}
 
     # Load own adapter if we have one
     if has_own_model:
         own_path = output_dir / f"round{round_num}_{node_id.replace(':', '_')}.safetensors"
         if own_path.exists():
-            state_dicts[node_id]   = load_file(str(own_path))
-            dataset_sizes[node_id] = dataset_size
+            state_dicts[node_id] = load_file(str(own_path))
+            sizes[node_id]       = dataset_size
             log.info(f"Loaded own adapter: {own_path}")
         else:
             log.warning(f"Own adapter not found at {own_path} — skipping self")
@@ -50,10 +51,9 @@ def aggregate(
         safe      = peer_id.replace(":", "_")
         peer_path = chunk_dir / f"round{round_num}_{safe}.safetensors"
         if peer_path.exists():
-            state_dicts[peer_id]   = load_file(str(peer_path))
-            ds_map = dataset_sizes or {}
-            dataset_sizes[peer_id] = ds_map.get(peer_id, 1)   # use reported size, fallback 1
-            log.info(f"Loaded peer adapter: {peer_path} size={dataset_sizes[peer_id]}")
+            state_dicts[peer_id] = load_file(str(peer_path))
+            sizes[peer_id]       = peer_sizes.get(peer_id, 1)
+            log.info(f"Loaded peer adapter: {peer_path} size={sizes[peer_id]}")
         else:
             log.warning(f"Peer adapter missing: {peer_path} — skipping")
 
@@ -66,11 +66,10 @@ def aggregate(
         merged = next(iter(state_dicts.values()))
     else:
         log.info(f"Merging {len(state_dicts)} adapters with FedAvg+SVD")
-        merged = _fedit_merge(state_dicts, rank=16, dataset_sizes=dataset_sizes)
+        merged = _fedit_merge(state_dicts, rank=16, dataset_sizes=sizes)
 
     merged = {k: v.contiguous() for k, v in merged.items()}
 
-    # Write merged adapter atomically — node-unique to prevent races
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"round{round_num}_{node_safe}_adapter.safetensors"
     tmp_path = output_dir / f"round{round_num}_{node_safe}_adapter.safetensors.tmp"
@@ -89,7 +88,7 @@ def _fedit_merge(state_dicts: dict, rank: int, dataset_sizes: dict) -> dict:
     """
     all_keys     = list(next(iter(state_dicts.values())).keys())
     merged       = {}
-    processed    : set = set()
+    processed: set = set()
 
     total_samples = sum(dataset_sizes.get(n, 1) for n in state_dicts)
     weights       = {n: dataset_sizes.get(n, 1) / max(total_samples, 1) for n in state_dicts}
@@ -117,10 +116,17 @@ def _fedit_merge(state_dicts: dict, rank: int, dataset_sizes: dict) -> dict:
             merged[key_A] = (torch.diag(sqrt_S) @ Vh[:rank, :]).contiguous().to(torch.float16)
             processed.update([key_A, key_B])
 
+    # Non-LoRA keys — guard against missing keys per-node
     for k in all_keys:
         if k not in processed:
+            contributors = [n for n in state_dicts if k in state_dicts[n]]
+            if not contributors:
+                log.warning(f"Key {k} missing from all adapters — skipping")
+                continue
+            total_w = sum(weights[n] for n in contributors)
             merged[k] = (
-                sum(state_dicts[n][k].float() * weights[n] for n in state_dicts)
+                sum(state_dicts[n][k].float() * (weights[n] / max(total_w, 1e-8))
+                    for n in contributors)
             ).contiguous().to(torch.float16)
 
     return merged
