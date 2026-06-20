@@ -86,6 +86,32 @@
     color: #0f172a;
     font-weight: 600;
   }
+
+  /* Rumor log styling */
+  .rumor-entry {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.8rem;
+  }
+  .rumor-entry:last-child { border-bottom: none; }
+  .rumor-time { color: #64748b; min-width: 80px; }
+  .rumor-type {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    min-width: 70px;
+    text-align: center;
+  }
+  .rumor-type.heartbeat { background: #1e3a5f; color: #60a5fa; }
+  .rumor-type.join      { background: #1e3a2f; color: #4ade80; }
+  .rumor-type.ready     { background: #3a2e1e; color: #facc15; }
+  .rumor-type.no_model  { background: #3a1e2e; color: #f87171; }
+  .rumor-origin { color: #e2e8f0; min-width: 100px; }
+  .rumor-payload { color: #94a3b8; font-size: 0.75rem; }
   .back-link {
     display: block;
     text-align: center;
@@ -172,6 +198,11 @@
     </div>
     
     <div class="card">
+      <h2>Rumor Log (newest 20)</h2>
+      <div class="global-table" id="rumor-log">Loading...</div>
+    </div>
+    
+    <div class="card">
       <h2>Heartbeat Seen</h2>
       <div class="global-table" id="heartbeat-seen">Loading...</div>
     </div>
@@ -252,12 +283,24 @@
         }).join('');
         document.getElementById('global-table').innerHTML = tableHtml || 'Empty';
         
-        // Display newest 10 seen rumors (already limited in Python, reverse for newest first)
-        const newestRumors = data.seen_rumors.slice().reverse();
-        const rumorsHtml = newestRumors.map(rumor => {
+        // Display newest 10 seen rumors (IDs only)
+        const rumorsHtml = (data.seen_rumors || []).slice().reverse().map(rumor => {
           return `<span class="node-tag">${rumor}</span>`;
         }).join('') || 'No rumors seen yet';
         document.getElementById('seen-rumors').innerHTML = rumorsHtml;
+        
+        // Display rumor log (full details, newest first)
+        const rumorLogHtml = (data.rumor_log || []).slice().reverse().map(entry => {
+          const ts = entry.rumor_id?.split(':').pop() || '';
+          const timeStr = ts ? new Date(parseFloat(ts) * 1000).toLocaleTimeString() : '';
+          return `<div class="rumor-entry">
+            <span class="rumor-time">${timeStr}</span>
+            <span class="rumor-type ${(entry.type || '').toLowerCase()}">${entry.type || ''}</span>
+            <span class="rumor-origin">${entry.originator_id || ''}</span>
+            <span class="rumor-payload">${JSON.stringify(entry.payload || {})}</span>
+          </div>`;
+        }).join('') || 'No rumors yet';
+        document.getElementById('rumor-log').innerHTML = rumorLogHtml;
         
         // Display all heartbeat seen
         const heartbeatHtml = data.heartbeat_seen.map(node => {

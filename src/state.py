@@ -24,6 +24,7 @@ class NodeState:
     ring_left:              str | None = None
     ring_right:             str | None = None
     seen_rumors:            set[str]   = field(default_factory=set)
+    rumor_log:              list[dict] = field(default_factory=list)
     heartbeat_seen:         set[str]   = field(default_factory=set)
     table_locked:           bool       = False
     last_table_change_time: float      = field(default_factory=time.time)
@@ -51,13 +52,16 @@ class NodeState:
     def is_seen(self, rumor_id: str) -> bool:
         return rumor_id in self.seen_rumors
 
-    def mark_seen(self, rumor_id: str) -> None:
+    def mark_seen(self, rumor_id: str, details: dict | None = None) -> None:
         self.seen_rumors.add(rumor_id)
+        if details is not None:
+            self.rumor_log.append(details)
 
     def reset_phase1(self) -> None:
         """Called at Phase 4→1 transition — clear all per-round state."""
         self.heartbeat_seen         = set()
         self.seen_rumors            = set()
+        self.rumor_log              = []
         self.phase                  = Phase.PHASE_1
         self.table_locked           = False
         self.ready_set              = set()
@@ -70,14 +74,6 @@ class NodeState:
         self.phase2_start_ts = 0.0
 
     def snapshot(self) -> dict:
-        def get_timestamp(rumor_id: str) -> float:
-            parts = rumor_id.split(":")
-            try:
-                return float(parts[-1])
-            except (ValueError, IndexError):
-                return 0.0
-
-        sorted_rumors = sorted(self.seen_rumors, key=get_timestamp)
         return {
             "node_id":          self.node_id,
             "is_bootstrap":     self.is_bootstrap,
@@ -94,6 +90,7 @@ class NodeState:
             "dead_this_round":  list(self.dead_this_round),
             "current_round":    self.round,
             "phase":            self.phase.value,
-            "seen_rumors":      sorted_rumors[-10:],
+            "seen_rumors":      list(self.seen_rumors)[-10:],
+            "rumor_log":        self.rumor_log[-20:],
             "heartbeat_seen":   list(self.heartbeat_seen),
         }

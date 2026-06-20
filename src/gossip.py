@@ -49,7 +49,7 @@ class GossipEngine:
         # 1. dedup
         if self.state.is_seen(rumor.rumor_id):
             return
-        self.state.mark_seen(rumor.rumor_id)
+        self.state.mark_seen(rumor.rumor_id, rumor.model_dump())
 
         # 2. round check
         if rumor.round != self.state.round:
@@ -121,6 +121,6 @@ class GossipEngine:
             ttl           = self.config.gossip_ttl,
         )
         # Mark it seen locally so we don't re-process our own heartbeat
-        self.state.mark_seen(rumor.rumor_id)
+        self.state.mark_seen(rumor.rumor_id, rumor.model_dump())
         self.state.heartbeat_seen.add(self.state.node_id)
         await self.spread(rumor)

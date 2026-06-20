@@ -104,7 +104,7 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                 ttl=config.gossip_ttl,
                 payload={"target_phase": "PHASE_2", "phase2_start_ts": ts},
             )
-            state.mark_seen(ready_rumor.rumor_id)
+            state.mark_seen(ready_rumor.rumor_id, ready_rumor.model_dump())
             await gossip.spread(ready_rumor)
 
             # Step 5: wait for barrier

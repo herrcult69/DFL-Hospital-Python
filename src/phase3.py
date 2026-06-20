@@ -93,7 +93,7 @@ class AggregationPhase:
             ttl           = self.config.gossip_ttl,
             payload       = {"target_phase": "PHASE_4"},
         )
-        self.state.mark_seen(rumor.rumor_id)
+        self.state.mark_seen(rumor.rumor_id, rumor.model_dump())
         await self.gossip.spread(rumor)
 
         while True:

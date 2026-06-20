@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from enum import Enum
+import time
 
 class JoinRequest(BaseModel):
     node_id: str  # "host:gossip_port:grpc_port" + later public key and certs 
@@ -28,6 +29,7 @@ class StatusResponse(BaseModel):
     current_round:    int
     phase:            str
     seen_rumors:      list[str]
+    rumor_log:        list[dict]
     heartbeat_seen:   list[str]
 
 class RewireRequest(BaseModel):
@@ -54,14 +56,15 @@ class Rumor(BaseModel):
 
     @staticmethod
     def build(type: RumorType, originator_id: str, round: int, ttl: int, payload: dict = {}) -> "Rumor":
+        ts = time.time()
         if type == RumorType.JOIN:
             joining_node = payload.get("node_id", originator_id)
-            rumor_id = f"{type}:{joining_node}:{round}"
+            rumor_id = f"{type}:{joining_node}:{round}:{ts}"
         elif type == RumorType.READY:
             target_phase = payload.get("target_phase", "")
-            rumor_id = f"{type}:{originator_id}:{round}:{target_phase}"
+            rumor_id = f"{type}:{originator_id}:{round}:{target_phase}:{ts}"
         else:
-            rumor_id = f"{type}:{originator_id}:{round}"
+            rumor_id = f"{type}:{originator_id}:{round}:{ts}"
         return Rumor(
             type=type,
             originator_id=originator_id,

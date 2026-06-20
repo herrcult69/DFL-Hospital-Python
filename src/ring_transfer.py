@@ -277,7 +277,7 @@ class RingPhase:
                 ttl           = self.config.gossip_ttl,
                 payload       = {},
             )
-            self.state.mark_seen(no_model_rumor.rumor_id)
+            self.state.mark_seen(no_model_rumor.rumor_id, no_model_rumor.model_dump())
             await self.gossip.spread(no_model_rumor)
             self.state.no_model_set.add(self.state.node_id)
             log.info("No local model — gossiped NO_MODEL signal to network")
@@ -371,7 +371,7 @@ class RingPhase:
             ttl           = self.config.gossip_ttl,
             payload       = {"target_phase": "PHASE_3", "phase2_start_ts": self.state.phase2_start_ts},
         )
-        self.state.mark_seen(rumor.rumor_id)
+        self.state.mark_seen(rumor.rumor_id, rumor.model_dump())
         await self.gossip.spread(rumor)
 
         while True:
