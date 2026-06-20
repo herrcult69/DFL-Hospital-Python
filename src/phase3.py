@@ -108,6 +108,7 @@ class AggregationPhase:
                 log.warning(f"Phase 3→4 deadline reached — dropping: {missing}")
                 for node in missing:
                     self.state.global_table.remove(node)
+                    self.state.global_table.remove(node)
                 if len(self.state.global_table) < 2:
                     self.state.table_locked           = False
                     self.state.ready_set_p4           = set()

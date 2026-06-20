@@ -170,5 +170,5 @@ class RoundCompletionPhase:
                 missing = set(self.state.global_table) - self.state.ready_set_p1
                 log.warning(f"Phase 4→1 timeout — dropping: {missing}")
                 for node in missing:
-                    self.state.global_table.remove(node)
+                    self.state.dead_this_round.add(node)
                 return len(self.state.global_table) >= 2

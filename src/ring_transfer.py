@@ -386,6 +386,7 @@ class RingPhase:
                 log.warning(f"Phase 2→3 timeout — dropping: {missing}")
                 for node in missing:
                     self.state.global_table.remove(node)
+                    self.state.dead_this_round.add(node)
                 if len(self.state.global_table) < 2:
                     self.state.table_locked           = False
                     self.state.ready_set_p3           = set()

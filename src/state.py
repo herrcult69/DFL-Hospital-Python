@@ -89,6 +89,7 @@ class NodeState:
             "ready_set":        list(self.ready_set),
             "ready_set_p3":     list(self.ready_set_p3),
             "ready_set_p4":     list(self.ready_set_p4),
+            "ready_set_p1":     list(self.ready_set_p1),
             "no_model_set":     list(self.no_model_set),
             "dead_this_round":  list(self.dead_this_round),
             "current_round":    self.round,
