@@ -32,6 +32,7 @@ import httpx
 from .config  import NetworkConfig
 from .state   import NodeState, Phase
 from .gossip  import GossipEngine
+from .inference import invalidate_cache
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +68,8 @@ class RoundCompletionPhase:
             )
         else:
             log.info(f"Training complete → {adapter_path}")
+
+        invalidate_cache()
 
         # ── 3. Dead-node K-graph eviction (bootstrap only) ────────────────────
         await self._evict_dead_nodes()

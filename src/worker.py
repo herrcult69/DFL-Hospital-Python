@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse, Response
 
 from .config import NetworkConfig
-from .models import JoinRequest, RewireRequest, RewireResponse, StatusResponse
+from .models import JoinRequest, RewireRequest, RewireResponse, StatusResponse, PredictRequest, PredictResponse
 from .state import NodeState, Phase
 
 from .gossip import GossipEngine
@@ -202,6 +202,42 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
             if node_id not in state.global_table:
                 state.add_node(node_id)
         return RewireResponse(status="ok")
+
+    @app.post("/predict", response_model=PredictResponse)
+    async def predict(req: PredictRequest):
+        if state.phase != Phase.IDLE:
+            return PredictResponse(
+                response="Node is not idle — training still in progress.",
+                node_id=state.node_id,
+                round=state.round,
+                status="not_idle",
+            )
+
+        loop = asyncio.get_event_loop()
+
+        def _infer():
+            # ── TESTING MODE (comment out for real) ──────────────────────────
+            return f"[STUB] Echo from {state.node_id} round {state.round}: {req.message}"
+            # ── REAL IMPLEMENTATION (uncomment for production) ────────────────
+            # from .lib.inference import run_inference
+            # return run_inference(req.message, str(config.model_path))
+
+        try:
+            result = await loop.run_in_executor(None, _infer)
+            return PredictResponse(
+                response=result,
+                node_id=state.node_id,
+                round=state.round,
+                status="ok",
+            )
+        except Exception as e:
+            log.error(f"Inference failed: {e}")
+            return PredictResponse(
+                response=f"Inference error: {e}",
+                node_id=state.node_id,
+                round=state.round,
+                status="error",
+            )
 
     @app.get("/status", response_model=StatusResponse)
     async def status():

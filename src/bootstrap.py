@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse, Response
 
 from .config import NetworkConfig
-from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse, Rumor, RumorType, EvictRequest
+from .models import JoinRequest, JoinResponse, RewireRequest, RewireResponse, StatusResponse, PredictRequest, PredictResponse, Rumor, RumorType, EvictRequest
 from .state import NodeState, Phase
 from .graph import GraphManager
 from .gossip import GossipEngine
@@ -240,6 +240,42 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
         sender_id = request.headers.get("X-Sender-Id", "")
         await gossip.receive(rumor, sender_id=sender_id)
         return {"status": "ok"}
+
+    @app.post("/predict", response_model=PredictResponse)
+    async def predict(req: PredictRequest):
+        if state.phase != Phase.IDLE:
+            return PredictResponse(
+                response="Node is not idle — training still in progress.",
+                node_id=state.node_id,
+                round=state.round,
+                status="not_idle",
+            )
+
+        loop = asyncio.get_event_loop()
+
+        def _infer():
+            # ── TESTING MODE (comment out for real) ──────────────────────────
+            return f"[STUB] Echo from {state.node_id} round {state.round}: {req.message}"
+            # ── REAL IMPLEMENTATION (uncomment for production) ────────────────
+            # from .lib.inference import run_inference
+            # return run_inference(req.message, str(config.model_path))
+
+        try:
+            result = await loop.run_in_executor(None, _infer)
+            return PredictResponse(
+                response=result,
+                node_id=state.node_id,
+                round=state.round,
+                status="ok",
+            )
+        except Exception as e:
+            log.error(f"Inference failed: {e}")
+            return PredictResponse(
+                response=f"Inference error: {e}",
+                node_id=state.node_id,
+                round=state.round,
+                status="error",
+            )
 
     @app.get("/status", response_model=StatusResponse)
     async def status():

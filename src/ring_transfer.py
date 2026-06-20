@@ -40,6 +40,19 @@ _GRPC_OPTIONS = [
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+def _get_dataset_size(config: NetworkConfig) -> int:
+    """Count lines in this node's dataset file (cheap I/O, not blocking)."""
+    try:
+        import json
+        p = config.dataset_path
+        if not Path(p).exists():
+            return 0
+        with open(p, encoding="utf-8") as f:
+            return sum(1 for _ in f)
+    except Exception:
+        return 0
+
+
 def _grpc_addr(node_id: str) -> str:
     """'host:gossip_port:grpc_port' → 'host:grpc_port'"""
     host, _, grpc_port = node_id.split(":")
@@ -108,14 +121,18 @@ class RingTransferServicer(ring_pb2_grpc.RingTransferServicer):
         dest.write_bytes(payload.data)
         log.info(
             f"Received model from {payload.originator_id} "
-            f"({len(payload.data) / 1024:.1f} KB) hop={payload.hop} ttl={payload.ttl}"
+            f"({len(payload.data) / 1024:.1f} KB) hop={payload.hop} ttl={payload.ttl} "
+            f"dataset_size={payload.dataset_size}"
         )
 
-        # ── 2. merge piggybacked dead list ────────────────────────────────────
+        # ── 2. merge piggybacked dead list + dataset_size ────────────────────
         for dead in payload.dead_nodes:
             if dead not in self.state.dead_this_round:
                 self.state.dead_this_round.add(dead)
                 log.warning(f"Piggybacked dead node learned: {dead}")
+
+        self.state.dataset_sizes[payload.originator_id] = payload.dataset_size
+        log.info(f"Dataset size for {payload.originator_id}: {payload.dataset_size}")
 
         # ── 3. forward if TTL allows ──────────────────────────────────────────
         ttl = payload.ttl - 1
@@ -130,6 +147,7 @@ class RingTransferServicer(ring_pb2_grpc.RingTransferServicer):
                         ttl           = ttl,
                         data          = payload.data,
                         dead_nodes    = list(self.state.dead_this_round),
+                        dataset_size  = payload.dataset_size,
                     ),
                     start_target    = self.state.ring_right,
                     state           = self.state,
@@ -225,10 +243,11 @@ async def _send_local_model(
         ttl           = ttl,
         data          = data,
         dead_nodes    = list(dead),
+        dataset_size  = _get_dataset_size(config),
     )
 
     addr = _grpc_addr(target)
-    log.info(f"Sending local model to {target} ({len(data) / 1024:.1f} KB) ttl={ttl}")
+    log.info(f"Sending local model to {target} ({len(data) / 1024:.1f} KB) ttl={ttl} dataset_size={payload.dataset_size}")
     try:
         async with grpc_aio.insecure_channel(addr, options=_GRPC_OPTIONS) as ch:
             stub = ring_pb2_grpc.RingTransferStub(ch)

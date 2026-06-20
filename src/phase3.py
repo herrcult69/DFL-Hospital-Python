@@ -59,6 +59,7 @@ class AggregationPhase:
                     participants  = participants,
                     has_own_model = has_own,
                     dataset_size  = 1,
+                    dataset_sizes = self.state.dataset_sizes,
                 )
             except Exception:
                 log.error(f"Aggregation thread raised:\n{traceback.format_exc()}")

@@ -19,7 +19,7 @@ class NetworkConfig: # Default settings
     dataset_path:  str   = "./data/dataset.jsonl"  # this node's local dataset
     phase3_total_budget: float = 600.0
     phase4_timeout: float = 1800.0
-    total_rounds: int = 5  # 0 = infinite rounds
+    total_rounds: int = 2  # 0 = infinite rounds
     
     @property
     def node_id(self) -> str:

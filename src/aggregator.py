@@ -21,6 +21,7 @@ def aggregate(
     participants:   list[str],   # global_table minus dead_this_round minus no_model_set
     has_own_model:  bool = True,
     dataset_size:   int  = 1,
+    dataset_sizes:  dict[str, int] | None = None,  # ← add this
 ) -> Path | None:
     """
     Load all .safetensors files from chunk_dir for this round.
@@ -50,8 +51,9 @@ def aggregate(
         peer_path = chunk_dir / f"round{round_num}_{safe}.safetensors"
         if peer_path.exists():
             state_dicts[peer_id]   = load_file(str(peer_path))
-            dataset_sizes[peer_id] = 1   # equal weighting — no dataset size exchange yet
-            log.info(f"Loaded peer adapter: {peer_path}")
+            ds_map = dataset_sizes or {}
+            dataset_sizes[peer_id] = ds_map.get(peer_id, 1)   # use reported size, fallback 1
+            log.info(f"Loaded peer adapter: {peer_path} size={dataset_sizes[peer_id]}")
         else:
             log.warning(f"Peer adapter missing: {peer_path} — skipping")
 

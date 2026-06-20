@@ -13,6 +13,17 @@ class JoinResponse(BaseModel):
     message: str
 
 
+class PredictRequest(BaseModel):
+    message: str
+
+
+class PredictResponse(BaseModel):
+    response: str
+    node_id:  str
+    round:    int
+    status:   str  # "ok" | "not_idle" | "error"
+
+
 class StatusResponse(BaseModel):
     node_id:          str
     global_table:     list[str]
@@ -30,6 +41,7 @@ class StatusResponse(BaseModel):
     phase:            str
     seen_rumors:      list[str]
     rumor_log:        list[dict]
+    dataset_sizes:    dict[str, int]
     heartbeat_seen:   list[str]
 
 class RewireRequest(BaseModel):

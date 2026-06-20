@@ -36,6 +36,7 @@ class NodeState:
     dead_this_round:        set[str]   = field(default_factory=set) 
     no_model_set:           set[str]   = field(default_factory=set)   # alive but no LoRA
     phase2_start_ts:        float      = 0.0
+    dataset_sizes:          dict[str, int] = field(default_factory=dict)
 
     def add_node(self, node_id: str) -> bool:
         """Add a node to the global table. Returns True if it was new."""
@@ -72,6 +73,7 @@ class NodeState:
         self.ready_set_p1 = set()
         self.last_table_change_time = time.time()
         self.phase2_start_ts = 0.0
+        self.dataset_sizes = {}
 
     def snapshot(self) -> dict:
         return {
@@ -88,6 +90,7 @@ class NodeState:
             "ready_set_p1":     list(self.ready_set_p1),
             "no_model_set":     list(self.no_model_set),
             "dead_this_round":  list(self.dead_this_round),
+            "dataset_sizes":    dict(self.dataset_sizes),
             "current_round":    self.round,
             "phase":            self.phase.value,
             "seen_rumors":      list(self.seen_rumors)[-10:],
