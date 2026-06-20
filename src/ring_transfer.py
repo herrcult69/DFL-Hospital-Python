@@ -279,6 +279,7 @@ class RingPhase:
             )
             self.state.mark_seen(no_model_rumor.rumor_id)
             await self.gossip.spread(no_model_rumor)
+            self.state.no_model_set.add(self.state.node_id)
             log.info("No local model — gossiped NO_MODEL signal to network")
 
         now       = time.time()

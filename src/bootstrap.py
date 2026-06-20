@@ -152,14 +152,14 @@ def create_bootstrap_app(state: NodeState, graph: GraphManager, config: NetworkC
                     ring_phase = RingPhase(state=state, config=config, gossip=gossip)
                     await ring_phase.run()
 
-                if state.phase == Phase.PHASE_3:
+                elif state.phase == Phase.PHASE_3:
                     from .phase3 import AggregationPhase
                     safe       = state.node_id.replace(":", "_")
                     chunk_dir  = Path(f"./chunks_{safe}")
                     agg_phase  = AggregationPhase(state=state, config=config, gossip=gossip)
                     await agg_phase.run(chunk_dir=chunk_dir)
 
-                if state.phase == Phase.PHASE_4:
+                elif state.phase == Phase.PHASE_4:
                     from .phase4 import RoundCompletionPhase
                     safe       = state.node_id.replace(":", "_")
                     chunk_dir  = Path(f"./chunks_{safe}")

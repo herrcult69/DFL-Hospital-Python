@@ -63,17 +63,20 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
 
         async def _stability_timer():
             while True:
-                await asyncio.sleep(1.0)  # check every second
+                await asyncio.sleep(1.0)
+
+                # Only active during PHASE_1
+                if state.phase != Phase.PHASE_1:
+                    await asyncio.sleep(2.0)   # idle poll — wait for reset
+                    continue
 
                 now              = time.time()
-                floor_met        = (now - phase1_start) >= config.phase1_floor
+                floor_met        = (now - state.last_table_change_time) >= config.phase1_floor
                 table_stable     = (now - state.last_table_change_time) >= config.stability_window
 
-                if floor_met and table_stable:
-                    log.info("Stability timer fired — locking table")
+                if floor_met and table_stable and not state.table_locked:
+                    log.info(f"Stability timer fired — round {state.round}, locking table")
                     await _end_phase1()
-                    if state.phase == Phase.PHASE_2:   # only exit if we actually advanced
-                        return  # task is done
 
         async def _end_phase1():
             # Step 1: Lock the table
@@ -155,14 +158,14 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                     ring_phase = RingPhase(state=state, config=config, gossip=gossip)
                     await ring_phase.run()
 
-                if state.phase == Phase.PHASE_3:
+                elif state.phase == Phase.PHASE_3:
                     from .phase3 import AggregationPhase
                     safe      = state.node_id.replace(":", "_")
                     chunk_dir = Path(f"./chunks_{safe}")
                     agg_phase = AggregationPhase(state=state, config=config, gossip=gossip)
                     await agg_phase.run(chunk_dir=chunk_dir)
 
-                if state.phase == Phase.PHASE_4:
+                elif state.phase == Phase.PHASE_4:
                     from .phase4 import RoundCompletionPhase
                     safe      = state.node_id.replace(":", "_")
                     chunk_dir = Path(f"./chunks_{safe}")

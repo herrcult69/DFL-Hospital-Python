@@ -19,6 +19,7 @@ import os
 import shutil
 import traceback
 from pathlib import Path
+from safetensors.torch import load_file, save_file
 
 import torch
 from datasets import DatasetDict, load_dataset
@@ -51,35 +52,48 @@ class LocalTrainer:
         self._safe_id     = node_id.replace(":", "_")
 
     # ── public entry point ──────────────────────────────────────────────────
+    def train(self):
+        safe = self.node_id.replace(":", "_")
+        out = self.model_dir / f"round{self.round_num + 1}_{safe}.safetensors"
+        
+        # Match YOUR model's actual key naming (GPT-2 style)
+        fake = {}
+        for layer in range(6):  # match your model's layer count
+            fake[f"base_model.model.transformer.h.{layer}.attn.c_attn.lora_A.weight"] = torch.zeros(8, 768, dtype=torch.float16)
+            fake[f"base_model.model.transformer.h.{layer}.attn.c_attn.lora_B.weight"] = torch.zeros(2304, 8, dtype=torch.float16)
+        
+        save_file(fake, str(out))
+        return out
 
-    def train(self) -> Path | None:
-        """
-        Run training for this round.
+    """ Below is real code, above is fake one for testing"""
+    # def train(self) -> Path | None:
+    #     """
+    #     Run training for this round.
 
-        Returns the stamped Path (round{N+1}_{node_id}.safetensors)
-        on success, or None on failure.
-        """
-        if not self.dataset_path.exists():
-            log.warning(f"Dataset not found at {self.dataset_path} — skipping training")
-            return None
+    #     Returns the stamped Path (round{N+1}_{node_id}.safetensors)
+    #     on success, or None on failure.
+    #     """
+    #     if not self.dataset_path.exists():
+    #         log.warning(f"Dataset not found at {self.dataset_path} — skipping training")
+    #         return None
 
-        try:
-            self._run_hf_trainer()
+    #     try:
+    #         self._run_hf_trainer()
 
-            src  = self.model_dir / "adapter_model.safetensors"
-            dest = self.model_dir / f"round{self.round_num + 1}_{self._safe_id}.safetensors"
+    #         src  = self.model_dir / "adapter_model.safetensors"
+    #         dest = self.model_dir / f"round{self.round_num + 1}_{self._safe_id}.safetensors"
 
-            if not src.exists():
-                log.error(f"Training finished but adapter not found at {src}")
-                return None
+    #         if not src.exists():
+    #             log.error(f"Training finished but adapter not found at {src}")
+    #             return None
 
-            shutil.copy2(src, dest)
-            log.info(f"Adapter stamped for next round → {dest}")
-            return dest
+    #         shutil.copy2(src, dest)
+    #         log.info(f"Adapter stamped for next round → {dest}")
+    #         return dest
 
-        except Exception:
-            log.error(f"Training raised:\n{traceback.format_exc()}")
-            return None
+    #     except Exception:
+    #         log.error(f"Training raised:\n{traceback.format_exc()}")
+    #         return None
 
     def get_dataset_size(self) -> int:
         """Return number of samples in this node's dataset."""

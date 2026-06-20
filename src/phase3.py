@@ -33,6 +33,16 @@ class AggregationPhase:
             if n not in self.state.no_model_set
         ]
         has_own = self.state.node_id not in self.state.no_model_set
+        log.info(f"participant: {participants}, has own {has_own}")
+        
+        if not participants and not has_own:
+            log.info("No models available this round — skipping aggregation")
+            advanced = await self._ready_barrier_phase4()
+            if advanced:
+                self.state.phase = Phase.PHASE_4
+                log.info("=== Phase flipped to PHASE_4 (no-model round) ===")
+            return
+        
         log.info("Submitting aggregation to thread executor...")
         # Run aggregation in a thread — CPU/IO bound, don't block event loop
         loop        = asyncio.get_event_loop()

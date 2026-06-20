@@ -18,7 +18,7 @@ from src.bootstrap import create_bootstrap_app
 from src.worker import create_worker_app
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
