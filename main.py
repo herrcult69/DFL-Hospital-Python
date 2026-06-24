@@ -18,7 +18,7 @@ from src.bootstrap import create_bootstrap_app
 from src.worker import create_worker_app
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
@@ -32,6 +32,7 @@ def parse_args():
     p.add_argument("--bootstrap",     action="store_true")
     p.add_argument("--bootstrap-url", default="127.0.0.1:8000")
     p.add_argument("--model-dir",     default="./models", help="Directory for local LoRA adapters")
+    p.add_argument("--dataset-path",  default="",  help="Path to this node's local dataset (e.g. ./dataset/node_1.json)")
     return p.parse_args()
 
 
@@ -44,6 +45,7 @@ def main():
         port=args.port,
         grpc_port=args.grpc_port,
         model_dir=args.model_dir,
+        dataset_path=args.dataset_path or NetworkConfig.dataset_path,
     )
 
     if args.bootstrap:

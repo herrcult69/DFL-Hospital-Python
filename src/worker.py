@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse, Response
 
 from .config import NetworkConfig
-from .models import JoinRequest, RewireRequest, RewireResponse, StatusResponse
+from .models import JoinRequest, RewireRequest, RewireResponse, StatusResponse, PredictRequest, PredictResponse
 from .state import NodeState, Phase
 
 from .gossip import GossipEngine
@@ -21,6 +21,11 @@ from .ring_transfer import RingPhase
 
 log = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+def _handle_task_exception(loop, context):
+    msg = context.get("exception", context["message"])
+    log.error(f"Unhandled async task exception: {msg}", exc_info=context.get("exception"))
+
+asyncio.get_event_loop().set_exception_handler(_handle_task_exception)
 
 
 def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
@@ -48,8 +53,9 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                 log.error(f"Could not reach Bootstrap at {config.bootstrap_url}: {e}")
                 
         async def _heartbeat_loop():
-            while state.phase == Phase.PHASE_1:
-                await gossip.originate_heartbeat()
+            while True:
+                if state.phase == Phase.PHASE_1:
+                    await gossip.originate_heartbeat()
                 await asyncio.sleep(config.heartbeat_interval)
         
 
@@ -57,17 +63,20 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
 
         async def _stability_timer():
             while True:
-                await asyncio.sleep(1.0)  # check every second
+                await asyncio.sleep(1.0)
+
+                # Only active during PHASE_1
+                if state.phase != Phase.PHASE_1:
+                    await asyncio.sleep(2.0)   # idle poll — wait for reset
+                    continue
 
                 now              = time.time()
-                floor_met        = (now - phase1_start) >= config.phase1_floor
+                floor_met        = (now - state.last_table_change_time) >= config.phase1_floor
                 table_stable     = (now - state.last_table_change_time) >= config.stability_window
 
-                if floor_met and table_stable:
-                    log.info("Stability timer fired — locking table")
+                if floor_met and table_stable and not state.table_locked:
+                    log.info(f"Stability timer fired — round {state.round}, locking table")
                     await _end_phase1()
-                    if state.phase == Phase.PHASE_2:   # only exit if we actually advanced
-                        return  # task is done
 
         async def _end_phase1():
             # Step 1: Lock the table
@@ -106,9 +115,9 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                 round=state.round,
                 rumor_id=f"READY:{state.node_id}:{state.round}:{ts}",
                 ttl=config.gossip_ttl,
-                payload={"target_phase": "PHASE_2"},
+                payload={"target_phase": "PHASE_2", "phase2_start_ts": ts},
             )
-            state.mark_seen(ready_rumor.rumor_id)
+            state.mark_seen(ready_rumor.rumor_id, ready_rumor.model_dump())
             await gossip.spread(ready_rumor)
 
             # Step 5: wait for barrier
@@ -141,22 +150,33 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
                         return False               # ← failed, don't flip
                     return True                    # ← reduced set, still proceed
         async def _phase2_loop():
-            while state.phase == Phase.PHASE_1:
-                await asyncio.sleep(0.5)
+            while True:
+                while state.phase == Phase.PHASE_1:
+                    await asyncio.sleep(0.5)
 
-            from pathlib import Path
-            model_path = Path(
-                f"./models/round{state.round}"
-                f"_{state.node_id.replace(':', '_')}.safetensors"
-            )
-            if not model_path.exists():
-                log.info(f"Round {state.round}: no local model — skipping Phase 2 & 3 to PHASE_4")
-                state.phase = Phase.PHASE_4
-                return
+                if state.phase == Phase.PHASE_2:
+                    ring_phase = RingPhase(state=state, config=config, gossip=gossip)
+                    await ring_phase.run()
 
-            if state.phase == Phase.PHASE_2:
-                ring_phase = RingPhase(state=state, config=config, gossip=gossip)
-                await ring_phase.run()
+                elif state.phase == Phase.PHASE_3:
+                    from .phase3 import AggregationPhase
+                    safe      = state.node_id.replace(":", "_")
+                    chunk_dir = Path(f"./chunks_{safe}")
+                    agg_phase = AggregationPhase(state=state, config=config, gossip=gossip)
+                    await agg_phase.run(chunk_dir=chunk_dir)
+
+                elif state.phase == Phase.PHASE_4:
+                    from .phase4 import RoundCompletionPhase
+                    safe      = state.node_id.replace(":", "_")
+                    chunk_dir = Path(f"./chunks_{safe}")
+                    p4        = RoundCompletionPhase(state=state, config=config, gossip=gossip)
+                    await p4.run(chunk_dir=chunk_dir)
+                    # reset_phase1() sets phase → PHASE_1, outer while True loops back
+
+                if config.total_rounds and state.round >= config.total_rounds:
+                    log.info(f"All {config.total_rounds} rounds complete — node going IDLE")
+                    state.phase = Phase.IDLE
+                    return
 
         timer_task    = asyncio.create_task(_stability_timer())
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
@@ -182,6 +202,39 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
             if node_id not in state.global_table:
                 state.add_node(node_id)
         return RewireResponse(status="ok")
+
+    @app.post("/predict", response_model=PredictResponse)
+    async def predict(req: PredictRequest):
+        if state.phase != Phase.IDLE:
+            return PredictResponse(
+                response="Node is not idle — training still in progress.",
+                node_id=state.node_id,
+                round=state.round,
+                status="not_idle",
+            )
+
+        loop = asyncio.get_event_loop()
+
+        def _infer():
+            from inference import run_inference
+            return run_inference(req.message, str(config.model_path))
+
+        try:
+            result = await loop.run_in_executor(None, _infer)
+            return PredictResponse(
+                response=result,
+                node_id=state.node_id,
+                round=state.round,
+                status="ok",
+            )
+        except Exception as e:
+            log.error(f"Inference failed: {e}")
+            return PredictResponse(
+                response=f"Inference error: {e}",
+                node_id=state.node_id,
+                round=state.round,
+                status="error",
+            )
 
     @app.get("/status", response_model=StatusResponse)
     async def status():

@@ -13,6 +13,7 @@ message ModelPayload {
   int32  ttl                 = 4;
   bytes  data                = 5;
   repeated string dead_nodes = 6;
+  int32  dataset_size        = 7;
 }
 
 message ModelAck {
