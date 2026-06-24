@@ -216,11 +216,8 @@ def create_worker_app(state: NodeState, config: NetworkConfig) -> FastAPI:
         loop = asyncio.get_event_loop()
 
         def _infer():
-            # ── TESTING MODE (comment out for real) ──────────────────────────
-            return f"[STUB] Echo from {state.node_id} round {state.round}: {req.message}"
-            # ── REAL IMPLEMENTATION (uncomment for production) ────────────────
-            # from .lib.inference import run_inference
-            # return run_inference(req.message, str(config.model_path))
+            from inference import run_inference
+            return run_inference(req.message, str(config.model_path))
 
         try:
             result = await loop.run_in_executor(None, _infer)

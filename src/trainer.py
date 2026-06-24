@@ -29,6 +29,8 @@ from transformers import (
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     Trainer,
+    TrainerCallback,
+    EarlyStoppingCallback,
     TrainingArguments,
 )
 
@@ -56,44 +58,34 @@ class LocalTrainer:
         safe = self.node_id.replace(":", "_")
         out = self.model_dir / f"round{self.round_num + 1}_{safe}.safetensors"
         
-        # Match YOUR model's actual key naming (GPT-2 style)
-        fake = {}
-        for layer in range(6):  # match your model's layer count
-            fake[f"base_model.model.transformer.h.{layer}.attn.c_attn.lora_A.weight"] = torch.zeros(8, 768, dtype=torch.float16)
-            fake[f"base_model.model.transformer.h.{layer}.attn.c_attn.lora_B.weight"] = torch.zeros(2304, 8, dtype=torch.float16)
-        
-        save_file(fake, str(out))
-        return out
+    def train(self) -> Path | None:
+        """
+        Run training for this round.
 
-    """ Below is real code, above is fake one for testing"""
-    # def train(self) -> Path | None:
-    #     """
-    #     Run training for this round.
+        Returns the stamped Path (round{N+1}_{node_id}.safetensors)
+        on success, or None on failure.
+        """
+        if not self.dataset_path.exists():
+            log.warning(f"Dataset not found at {self.dataset_path} — skipping training")
+            return None
 
-    #     Returns the stamped Path (round{N+1}_{node_id}.safetensors)
-    #     on success, or None on failure.
-    #     """
-    #     if not self.dataset_path.exists():
-    #         log.warning(f"Dataset not found at {self.dataset_path} — skipping training")
-    #         return None
+        try:
+            self._run_hf_trainer()
 
-    #     try:
-    #         self._run_hf_trainer()
+            src  = self.model_dir / "adapter_model.safetensors"
+            dest = self.model_dir / f"round{self.round_num + 1}_{self._safe_id}.safetensors"
 
-    #         src  = self.model_dir / "adapter_model.safetensors"
-    #         dest = self.model_dir / f"round{self.round_num + 1}_{self._safe_id}.safetensors"
+            if not src.exists():
+                log.error(f"Training finished but adapter not found at {src}")
+                return None
 
-    #         if not src.exists():
-    #             log.error(f"Training finished but adapter not found at {src}")
-    #             return None
+            shutil.copy2(src, dest)
+            log.info(f"Adapter stamped for next round → {dest}")
+            return dest
 
-    #         shutil.copy2(src, dest)
-    #         log.info(f"Adapter stamped for next round → {dest}")
-    #         return dest
-
-    #     except Exception:
-    #         log.error(f"Training raised:\n{traceback.format_exc()}")
-    #         return None
+        except Exception:
+            log.error(f"Training raised:\n{traceback.format_exc()}")
+            return None
 
     def get_dataset_size(self) -> int:
         """Return number of samples in this node's dataset."""
@@ -219,37 +211,104 @@ class LocalTrainer:
             tokenizer=tokenizer, mlm=False, pad_to_multiple_of=8
         )
 
+        EVAL_SAVE_EVERY_N_EPOCHS = 10
+
+        class EvalSaveEveryNEpochsCallback(TrainerCallback):
+            def __init__(self, interval_epochs: int):
+                self.interval_epochs = interval_epochs
+
+            def on_epoch_end(self, args, state, control, **kwargs):
+                epoch = int(round(state.epoch or 0))
+                should_run = epoch > 0 and epoch % self.interval_epochs == 0
+                control.should_evaluate = should_run
+                control.should_save = should_run
+                return control
+
+        class KeepBestNCheckpointsCallback(TrainerCallback):
+            def __init__(self, output_dir: str, n_best: int = 5):
+                self.output_dir = output_dir
+                self.n_best = n_best
+                self.checkpoint_scores = {}  # checkpoint_dir_name -> eval_loss
+
+            def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+                if not metrics:
+                    return control
+                eval_loss = metrics.get("eval_loss")
+                if eval_loss is None:
+                    return control
+                ckpt_name = f"checkpoint-{state.global_step}"
+                self.checkpoint_scores[ckpt_name] = float(eval_loss)
+                return control
+
+            def on_save(self, args, state, control, **kwargs):
+                if not self.output_dir or not os.path.isdir(self.output_dir):
+                    return control
+
+                ckpt_dirs = []
+                for name in os.listdir(self.output_dir):
+                    full_path = os.path.join(self.output_dir, name)
+                    if name.startswith("checkpoint-") and os.path.isdir(full_path):
+                        ckpt_dirs.append(name)
+
+                if len(ckpt_dirs) <= self.n_best:
+                    return control
+
+                def score(name: str) -> float:
+                    # Unknown scores get treated as worst so they are deleted first
+                    return self.checkpoint_scores.get(name, float("inf"))
+
+                ckpt_dirs_sorted = sorted(ckpt_dirs, key=score)
+                keep = set(ckpt_dirs_sorted[: self.n_best])
+
+                for name in ckpt_dirs:
+                    if name in keep:
+                        continue
+                    full_path = os.path.join(self.output_dir, name)
+                    try:
+                        shutil.rmtree(full_path)
+                    except Exception:
+                        pass
+
+                return control
+
         # 5. Training arguments — fast-demo settings (~30 seconds)
         training_args = TrainingArguments(
-            output_dir                  = output_str,
-            per_device_train_batch_size = 4,
-            gradient_accumulation_steps = 2,
-            learning_rate               = 3e-4,
-            logging_steps               = 1,
-            max_steps                   = 5,
-            save_strategy               = "no",
-            eval_strategy               = "no",
-            save_total_limit            = None,
-            load_best_model_at_end      = False,
-            bf16                        = _has_gpu,
-            optim                       = "adamw_torch",
-            report_to                   = "none",
-            gradient_checkpointing      = False,
-            dataloader_num_workers      = 0 if not _has_gpu else 2,
-            dataloader_pin_memory       = _has_gpu,
+            output_dir=output_str,
+            per_device_train_batch_size=4,
+            gradient_accumulation_steps=4,
+            learning_rate=1e-4,
+            logging_steps=10,
+            num_train_epochs=30,
+            save_strategy="epoch",
+            save_total_limit=None,
+            eval_strategy="epoch",
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            greater_is_better=False,
+            bf16=True,
+            optim="adamw_torch",
+            report_to="none",
+            gradient_checkpointing=False,
+            dataloader_num_workers=4,
+            dataloader_pin_memory=True
         )
 
         # 6. Trainer
         trainer = Trainer(
             model=model,
             train_dataset=tokenized["train"],
-            eval_dataset=None,
+            eval_dataset=tokenized["validation"],
             args=training_args,
             data_collator=collator,
+            callbacks=[
+                EvalSaveEveryNEpochsCallback(EVAL_SAVE_EVERY_N_EPOCHS),
+                KeepBestNCheckpointsCallback(output_dir=training_args.output_dir, n_best=5),
+                EarlyStoppingCallback(early_stopping_patience=3, early_stopping_threshold=1e-5),
+            ],
         )
 
         # 7. Train
-        log.info("Starting training (fast demo — 5 steps)...")
+        log.info("Starting training")
         trainer.train()
 
         # 8. Save
