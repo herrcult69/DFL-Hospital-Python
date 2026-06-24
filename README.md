@@ -1,8 +1,18 @@
 # DFL Clinic — Decentralized Federated Learning
 
-A pure Python, peer-to-peer federated learning system for medical diagnosis.
-Three hospital nodes collaboratively fine-tune a shared AI model without ever
-sharing raw patient data. No central server. No Java. No raw TCP sockets.
+A pure Python, peer-to-peer federated learning system for medical diagnosis using Large Language Models (LLMs). The nodes in this network collaborate to fine-tune a shared AI model (using LoRA) on their local private datasets without ever sharing raw patient data.
+
+It features a decentralized ring/graph topology, gRPC-based parameter transfer, a gossip protocol for state synchronization, and a FastAPI-based REST API for node management and status.
+
+---
+
+## Features
+
+- **Peer-to-Peer Architecture:** No single central server for aggregation. Nodes organize into a K-regular graph topology.
+- **Federated Fine-Tuning (LoRA):** Low-Rank Adaptation (LoRA) is used to fine-tune the model efficiently.
+- **Privacy-Preserving:** Raw patient data never leaves the hospital node. Only model weight updates are transferred securely via gRPC.
+- **Gossip Protocol:** Node discovery and status updates are propagated using a lightweight gossip protocol.
+- **FastAPI Backend:** Modern, fast REST APIs for dashboard and status monitoring.
 
 ---
 
@@ -10,149 +20,188 @@ sharing raw patient data. No central server. No Java. No raw TCP sockets.
 
 - Python 3.10+
 
+Install the required dependencies:
+
 ```bash
-pip install flask transformers peft datasets safetensors torch requests
+pip install -r requirements.txt
 ```
+
+You will also need the HuggingFace ML libraries for training and inference:
+
+```bash
+pip install transformers peft datasets
+```
+
+> **Note:** `transformers`, `peft`, and `datasets` are required by `trainer.py` and `inference.py` but are not listed in `requirements.txt`.
 
 ---
 
 ## Project Structure
 
 ```
-dfl/
-├── dfl_node.py              ← entry point: CLI args, Flask routes, bootstrap
-├── lib/
-│   ├── __init__.py
-│   ├── state.py            ← shared { phase, round } + threading.Lock
-│   ├── round_loop.py       ← sequential round loop + polling barrier
-│   ├── local_trainer.py    ← LoRA fine-tuning with HuggingFace Trainer
-│   ├── aggregator.py       ← FedIT SVD merge + atomic file write
-│   └── inference.py        ← GPT-2 inference, lazy model cache
-├── dataset/
-│   ├── part1.jsonl         ← Hospital A private data (never leaves node)
-│   ├── part2.jsonl         ← Hospital B private data
-│   └── part3.jsonl         ← Hospital C private data
-├── output/
-│   ├── p1_gpt2_lora/
-│   ├── p2_gpt2_lora/
-│   └── p3_gpt2_lora/
-└── templates/
-    └── chat.html           ← browser UI for /chat endpoint
+dfl-hospital-python/
+├── main.py                  ← Entry point for running Bootstrap or Worker nodes
+├── requirements.txt         ← Project dependencies
+├── ring.proto               ← Protocol Buffers definition for gRPC weight transfer
+├── src/
+│   ├── config.py            ← Configuration defaults and CLI parsing logic
+│   ├── bootstrap.py         ← Bootstrap node API and logic
+│   ├── worker.py            ← Worker node API and logic
+│   ├── state.py             ← Node state management
+│   ├── graph.py             ← K-regular graph topology management
+│   ├── gossip.py            ← Gossip protocol implementation
+│   ├── trainer.py           ← Local LoRA training logic
+│   ├── aggregator.py        ← Model weight aggregation
+│   ├── ring_transfer.py     ← gRPC service for weight transfer
+│   └── ...
+├── models/                  ← Local and merged LoRA adapters
+├── dataset/                 ← Local datasets for nodes
+└── templates/               ← HTML templates for dashboards
+
 ```
 
 ---
 
-## Dataset Format
+## Getting Started (For Localhost Single Machine)
 
-Each `partN.jsonl` has one JSON object per line:
 
-```json
-{"Question": "Patient presents with...", "Complex_CoT": "Reasoning...", "Response": "Diagnosis: ..."}
-```
+### 1. Start the Bootstrap Node
 
----
-
-## Running — Single Machine (3 terminals)
+The bootstrap node acts as the entry point to the network.
 
 ```bash
-# Terminal 1 — Hospital A
-python fl_node.py --node-id 1 --port 5201 \
-  --peers 2:127.0.0.1:5202 3:127.0.0.1:5203
-
-# Terminal 2 — Hospital B
-python fl_node.py --node-id 2 --port 5202 \
-  --peers 1:127.0.0.1:5201 3:127.0.0.1:5203
-
-# Terminal 3 — Hospital C
-python fl_node.py --node-id 3 --port 5203 \
-  --peers 1:127.0.0.1:5201 2:127.0.0.1:5202
+python main.py --host 127.0.0.1 --port 8000 --grpc-port 9000
+  --bootstrap
+  --dataset-path ./dataset/node_1.json
 ```
 
-Start all three within a few seconds of each other.
-Nodes will poll and wait for each other automatically.
+### 2. Start Worker Nodes
 
----
+Start as many worker nodes as needed. They need to point to the bootstrap node URL.
 
-## Running — LAN Deployment (3 machines)
-
-Replace `127.0.0.1` with each machine's actual LAN IP:
-
+**Worker 1:**
 ```bash
-# Machine A — 192.168.1.10
-python fl_node.py --node-id 1 --port 5201 \
-  --peers 2:192.168.1.11:5202 3:192.168.1.12:5203
+python main.py --host 127.0.0.1 --port 8001 --grpc-port 9001
+  --bootstrap-url 127.0.0.1:8000
+  --dataset-path ./dataset/node_2.json
+```
 
-# Machine B — 192.168.1.11
-python fl_node.py --node-id 2 --port 5202 \
-  --peers 1:192.168.1.10:5201 3:192.168.1.12:5203
-
-# Machine C — 192.168.1.12
-python fl_node.py --node-id 3 --port 5203 \
-  --peers 1:192.168.1.10:5201 2:192.168.1.11:5202
+**Worker 2:**
+```bash
+python main.py --host 127.0.0.1 --port 8002 --grpc-port 9002
+  --bootstrap-url 127.0.0.1:8000
+  --dataset-path ./dataset/node_3.json
 ```
 
 ---
 
-## CLI Flags
+### Running — LAN Deployment (3 Machines)
+Replace `127.0.0.1` and `192.168.1.x` with your actual LAN IPs.
+**Machine A (Bootstrap Node) — 192.168.1.10:**
+```bash
+python main.py --host 192.168.1.10 --port 8000 --grpc-port 9000
+  --bootstrap
+  --dataset-path ./dataset/node_1.json
+```
+**Machine B (Worker Node 1) — 192.168.1.11:**
+```bash
+python main.py --host 192.168.1.11 --port 8001 --grpc-port 9001
+  --bootstrap-url 192.168.1.10:8000
+  --dataset-path ./dataset/node_2.json
+```
+**Machine C (Worker Node 2) — 192.168.1.12:**
+```bash
+python main.py --host 192.168.1.12 --port 8002 --grpc-port 9002
+  --bootstrap-url 192.168.1.10:8000
+  --dataset-path ./dataset/node_3.json
+```
+
+---
+
+## CLI Configuration Flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--node-id` | required | Integer ID for this node (1, 2, or 3) |
-| `--port` | required | Port this node's Flask server binds to |
-| `--peers` | required | Space-separated list of `ID:IP:PORT` |
-| `--rounds` | `3` | Number of FL rounds to run |
-| `--poll-interval` | `3.0` | Seconds between peer status polls |
-| `--poll-timeout` | `600.0` | Seconds before skipping a stuck peer |
+| `--host` | `127.0.0.1` | The host IP for the HTTP and gRPC servers. |
+| `--port` | `8000` | The port for the FastAPI HTTP server. |
+| `--grpc-port` | `9000` | The port for the gRPC server (used for weight transfer). |
+| `--k` | `4` | The degree of the graph topology (number of peers per node). |
+| `--bootstrap` | *(flag)* | Run this node as the Bootstrap node. |
+| `--bootstrap-url` | `127.0.0.1:8000` | The `IP:PORT` of the Bootstrap node (for workers). |
+| `--model-dir` | `./models` | Directory to save local and aggregated LoRA adapters. |
+| `--dataset-path` | `""` | Path to the specific JSONL dataset file for this node. |
 
 ---
 
-## HTTP Endpoints
+## HTTP Endpoints & Dashboards
+
+Each node exposes a web UI and several REST endpoints for monitoring and administration:
+
+### Bootstrap Node Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/status` | Returns `{"phase": "done", "round": 2}` |
-| `GET` | `/weights` | Serves `adapter_model.safetensors` |
-| `GET` | `/weights?round=N` | 404 if node's current round ≠ N |
-| `POST` | `/predict` | `{"symptoms":"..."}` → `{"diagnosis":"..."}` |
-| `GET` | `/chat` | Interactive browser UI |
+| `GET` | `/status` | JSON status snapshot (phase, round, table size, etc.) |
+| `GET` | `/table` | Full global routing table + node count |
+| `GET` | `/graph` | Adjacency list, degrees, K-regularity check |
+| `GET` | `/status-page` | **HTML dashboard** — live status, ready sets, heartbeat tracker, predict panel |
+| `GET` | `/graph-page` | **HTML graph visualization** — topology rendered with vis.js |
+| `POST` | `/join` | Worker registration (returns neighbors, global table, round) |
+| `POST` | `/gossip` | Receive gossip rumors |
+| `POST` | `/predict` | Run inference (only when `IDLE`) |
+| `POST` | `/start-round` | Trigger the next FL round |
+| `POST` | `/rewire-evict` | Remove dead nodes from K-graph |
+
+### Worker Node Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/status` | JSON status snapshot |
+| `GET` | `/` | **HTML dashboard** — live node status |
+| `POST` | `/gossip` | Receive gossip rumors |
+| `POST` | `/rewire` | Update neighbor map (called by bootstrap) |
+| `POST` | `/predict` | Run inference (only when `IDLE`) |
 
 ---
 
 ## Testing Manually
 
 ```bash
-# Node status
-curl http://127.0.0.1:5201/status
+# Check node status
+curl http://127.0.0.1:8000/status
 
-# Download adapter
-curl http://127.0.0.1:5201/weights -o adapter.safetensors
+# View routing table (bootstrap only)
+curl http://127.0.0.1:8000/table
 
-# Run inference
-curl -X POST http://127.0.0.1:5201/predict \
+# View graph topology (bootstrap only)
+curl http://127.0.0.1:8000/graph
+
+# Run inference on a worker (only works when node is IDLE)
+curl -X POST http://127.0.0.1:8001/predict \
   -H "Content-Type: application/json" \
-  -d '{"symptoms": "fever, cough, fatigue"}'
+  -d '{"message": "headache, nausea, sensitivity to light"}'
 
-# Browser UI
-open http://127.0.0.1:5201/chat
+# Open dashboards in browser
+# Bootstrap status:  http://127.0.0.1:8000/status-page
+# Bootstrap graph:   http://127.0.0.1:8000/graph-page  (interactive vis.js)
+# Worker dashboard:  http://127.0.0.1:8001/
 ```
 
 ---
 
-## Expected Startup Logs
+## Troubleshooting
 
-```
-[Node 1] 00:00:00 INFO Waiting for Flask on port 5201...
-[Node 1] 00:00:00 INFO Flask ready. Peers: {2: '127.0.0.1:5202', 3: '127.0.0.1:5203'}
-[Node 1] 00:00:00 INFO === Round 1/3 ===
-[Node 1] 00:00:00 INFO State → phase='training'  round=1
-[Node 1] 00:00:45 INFO State → phase='done'  round=1
-[Node 1] 00:00:45 INFO Local training done. Polling peers...
-[Node 1] 00:00:48 INFO Peer 2 done for round 1.
-[Node 1] 00:00:54 INFO Peer 3 done for round 1.
-[Node 1] 00:00:54 INFO State → phase='aggregating'  round=1
-[Node 1] 00:01:10 INFO State → phase='idle'  round=1
-[Node 1] 00:01:10 INFO Round 1 complete.
-```
+| Symptom | Cause | Fix |
+|---|---|---|
+| `connection refused` on gossip | Peer node hasn't started yet | Normal during startup — resolves on the next heartbeat |
+| Phase 3 (aggregation) times out | Exceeds the 600s budget | Increase `phase3_total_budget` in config |
+| Phase 4 (training) times out | Training exceeds the 1800s budget | Reduce dataset size or increase `phase4_timeout`; lower epoch count in `trainer.py` |
+| `CUDA out of memory` | GPU memory exhausted during training | Reduce batch size or max sequence length in `trainer.py` |
+| `/predict` returns `not_idle` | Node is still in a training round | Wait for all rounds to complete (node must be in `IDLE` phase) |
+| Adapter not found for inference | No training round has completed yet | Run at least one full FL round before calling `/predict` |
 
-> `connection refused` warnings during polling are normal if a peer started
-> slightly later — they resolve automatically on the next poll interval.
+---
+
+## License
+
+This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for details.
