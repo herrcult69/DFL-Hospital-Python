@@ -9,10 +9,39 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainerCa
 from peft import LoraConfig, get_peft_model, TaskType
 import os, shutil
 
-def main():
+NODE_ID      = 1
+OUTPUT_DIR   = "/test/node1_gpt_lora"
+DATASET_PATH = "/dataset/node_1.json"
+
+def get_dataset_size() -> int:
+    if not DATASET_PATH or not os.path.exists(DATASET_PATH):
+        return 0
+    try:
+        if DATASET_PATH.endswith(".json"):
+            with open(DATASET_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return len(data)
+        else:
+            with open(DATASET_PATH, "r", encoding="utf-8") as f:
+                return sum(1 for _ in f)
+    except Exception as e:
+        print(f"[Trainer] Error reading dataset size: {e}")
+        return 0
+
+def _enable_lora_grads(model):
+    for name, param in model.named_parameters():
+        if "lora_A" in name or "lora_B" in name:
+            param.requires_grad_(True)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[Trainer Node {NODE_ID}] Trainable params: {trainable:,}")
+
+def train(round_num: int):
     # 1. Load Dataset
-    print("Loading dataset from local file node_2.json...")
-    dataset = load_dataset("json", data_files="node_2.json", split="train")
+    if not os.path.exists(DATASET_PATH):
+        print(f"[Trainer] Warning: {DATASET_PATH} not found. Skipping training.")
+        return
+    print(f"Loading dataset from local file {DATASET_PATH}...")
+    dataset = load_dataset("json", data_files=DATASET_PATH, split="train")
 
     split_1 = dataset.train_test_split(test_size=0.2, seed=42)
     split_2 = split_1["test"].train_test_split(test_size=0.5, seed=42)
@@ -79,21 +108,29 @@ def main():
     )
 
     # 3. Setup DoRA
-    lora_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=16,
-        lora_alpha=32,
-        lora_dropout=0.05,
-        target_modules=["c_attn", "c_proj"],
-        use_dora=False  # DoRA (Weight-Decomposed Low-Rank Adaptation)
-    )
-
-    model = get_peft_model(model, lora_config, autocast_adapter_dtype=False)
-    _orig_load_adapter = model.load_adapter
-    def _load_adapter_no_autocast(*args, **kwargs):
-        kwargs.setdefault("autocast_adapter_dtype", False)
-        return _orig_load_adapter(*args, **kwargs)
-    model.load_adapter = _load_adapter_no_autocast
+    adapter_path = os.path.join(OUTPUT_DIR, "adapter_model.safetensors")
+    if round_num > 1 and os.path.exists(adapter_path):
+        print(f"[Trainer Node {NODE_ID}] Round {round_num}: Loading merged adapter.")
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, OUTPUT_DIR, is_trainable=True)
+        _enable_lora_grads(model)
+        model.train()
+    else:
+        print(f"[Trainer Node {NODE_ID}] Round {round_num}: Fresh LoRA adapter.")
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=16,
+            lora_alpha=32,
+            lora_dropout=0.05,
+            target_modules=["c_attn", "c_proj"],
+            use_dora=False  # DoRA (Weight-Decomposed Low-Rank Adaptation)
+        )
+        model = get_peft_model(model, lora_config, autocast_adapter_dtype=False)
+        _orig_load_adapter = model.load_adapter
+        def _load_adapter_no_autocast(*args, **kwargs):
+            kwargs.setdefault("autocast_adapter_dtype", False)
+            return _orig_load_adapter(*args, **kwargs)
+        model.load_adapter = _load_adapter_no_autocast
     model.print_trainable_parameters()
 
     # 4. Data Collator
@@ -161,7 +198,7 @@ def main():
 
     # 5. Training Arguments
     training_args = TrainingArguments(
-        output_dir="./node2_gpt2_lora",
+        output_dir=OUTPUT_DIR,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=4,
         learning_rate=1e-4,
@@ -196,7 +233,7 @@ def main():
     )
 
     # 7. Start Training
-    print("Starting baseline finetuning for node 2 dataset...")
+    print("Starting baseline finetuning for full dataset...")
     trainer.train()
 
     import math
@@ -212,9 +249,9 @@ def main():
 
     # 8. Save final model
     print("Saving model...")
-    trainer.model.save_pretrained("./node2_gpt2_lora_final")
-    tokenizer.save_pretrained("./node2_gpt2_lora_final")
-    print("Done!")
+    trainer.model.save_pretrained(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+    print(f"[Trainer Node {NODE_ID}] Round {round_num} done. Adapter → {OUTPUT_DIR}")
 
 if __name__ == "__main__":
-    main()
+    train(1)
